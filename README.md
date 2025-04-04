@@ -28,7 +28,7 @@ pip install fed_rf_mk
 ### Installing from Source
 
 ```bash
-git clone https://github.com/AlexandreCotorobai/fed_rf.git
+git clone https://github.com/ieeta-pt/fed_rf.git
 cd fed_rf
 pip install -e .
 ```
