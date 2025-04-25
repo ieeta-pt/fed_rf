@@ -4,11 +4,12 @@ import numpy.typing as npt
 from typing import Union, TypeVar, Any, TypedDict, TypeVar
 import pandas as pd
 from syft.service.policy.policy import MixedInputPolicy
-from fed_rf_mk.utils import check_status_last_code_requests
+from utils import check_status_last_code_requests
 import pickle
 import cloudpickle
 import random
 import copy
+import concurrent.futures
 
 DataFrame = TypeVar("pandas.DataFrame")
 NDArray = npt.NDArray[Any]
@@ -57,6 +58,7 @@ class FLClient:
             print(f"Successfully connected to {name} at {url}")
         except Exception as e:
             print(f"Failed to connect to {name} at {url}: {e}")
+    
     def check_status(self):
         """
         Checks and prints the status of all connected silos.
@@ -166,37 +168,67 @@ class FLClient:
             }
             print(f"Some weights were None. Distributing remaining weight: {self.weights}")
 
+        # --- Federated loop ---
         for epoch in range(self.modelParams["fl_epochs"]):
-            print(f"\nEpoch {epoch + 1}/{self.modelParams['fl_epochs']}")
+            print(f"\nEpoch {epoch+1}/{self.modelParams['fl_epochs']}")
 
-            for name, datasite in self.datasites.items():
-                data_asset = datasite.datasets[0].assets[0]
-                if epoch == 0:
-                    modelParams["model"] = None
-                modelParams = datasite.code.ml_experiment(
-                    data=data_asset, dataParams=dataParams, modelParams=modelParams
-                ).get_from(datasite)
-                if epoch == 0:
-                    modelParams_history[name] = copy.deepcopy(modelParams)
-
-                # # Load model from bytes
-                model = pickle.loads(modelParams["model"])
-                print(f"Model estimators: {model.n_estimators}")
-                
-            # **First Epoch** → Merge estimators and create a new averaged model
             if epoch == 0:
-                print(f"\nMerging estimators from all clients")
-                temp_model = None
-                for name, mp in modelParams_history.items():
-                    temp_model = pickle.loads(mp["model"])
-                    print(f"Temp model estimators: {temp_model.n_estimators}")
-                    all_estimators.extend(random.sample(temp_model.estimators_, int(temp_model.n_estimators * self.weights[name])))
-                    print(f"Len all_estimators: {len(all_estimators)}")
-                temp_model.estimators_ = all_estimators
-                print(f"Merged Model estimators: {temp_model.n_estimators}")
-                temp_model = cloudpickle.dumps(temp_model)
-                modelParams["model"] = temp_model
+                # Parallel dispatch to all silos
+                print("Launching first‐epoch training on all clients in parallel…")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.datasites)) as executor:
+                    # map future → client name
+                    futures: dict[concurrent.futures.Future, str] = {}
+                    for name, datasite in self.datasites.items():
+                        data_asset = datasite.datasets[0].assets[0]
+                        # push None as model for epoch 0
+                        futures[executor.submit(
+                            lambda ds, da, dp: ds.code.ml_experiment(
+                                data=da, dataParams=dp, modelParams={**modelParams, "model": None}
+                            ).get_from(ds),
+                            datasite, data_asset, dataParams
+                        )] = name
 
+                    # collect results
+                    for future in concurrent.futures.as_completed(futures):
+                        name = futures[future]
+                        try:
+                            mp = future.result()
+                            modelParams_history[name] = copy.deepcopy(mp)
+                            print(f" ✔ {name} completed")
+                        except Exception as e:
+                            print(f" ⚠️  {name} failed: {e}")
+
+                # Renormalize weights to only the successful clients
+                successful = list(modelParams_history.keys())
+                total_w = sum(self.weights[n] for n in successful)
+                self.weights = {n: self.weights[n] / total_w for n in successful}
+                print(f"Re‐normalized weights among successful clients: {self.weights}")
+
+                # Merge their estimators
+                print("Merging estimators from successful clients…")
+                all_estimators = []
+                merged_model = None
+                for name, mp in modelParams_history.items():
+                    clf = pickle.loads(mp["model"])
+                    n_to_take = int(clf.n_estimators * self.weights[name])
+                    all_estimators.extend(random.sample(clf.estimators_, n_to_take))
+                    merged_model = clf
+
+                # attach the merged ensemble
+                merged_model.estimators_ = all_estimators
+                modelParams["model"] = cloudpickle.dumps(merged_model)
+
+            else:
+                # subsequent epochs run sequentially on each client with the merged model
+                for name, datasite in self.datasites.items():
+                    data_asset = datasite.datasets[0].assets[0]
+                    modelParams = datasite.code.ml_experiment(
+                        data=data_asset,
+                        dataParams=dataParams,
+                        modelParams=modelParams
+                    ).get_from(datasite)
+
+        # store final merged modelParams
         self.set_model_params(modelParams)
         
     def run_evaluate(self):
@@ -219,6 +251,7 @@ class FLClient:
 def evaluate_global_model(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, matthews_corrcoef as mcc
+    from sklearn.metrics import precision_score, recall_score, f1_score
     import pickle
     import numpy as np
 
@@ -232,14 +265,22 @@ def evaluate_global_model(data: DataFrame, dataParams: dict, modelParams: dict) 
         y = data[dataParams["target"]]
         X = data.drop(dataParams["ignored_columns"], axis=1)
 
+        # Replace inf/-inf with NaN, cast to float64, drop NaNs
+        X = X.replace([np.inf, -np.inf], np.nan).astype(np.float64)
+        mask = ~X.isnull().any(axis=1)
+        X = X[mask]
+        y = y[mask]
+        
         # Step 2: Split the data into training and testing sets
         _, X_test, _, y_test = train_test_split(X, y, test_size=modelParams["test_size"], stratify=y, random_state=42)
         return X_test, y_test
 
     def evaluate(model, data: tuple[pd.DataFrame, pd.Series]) -> dict:
         X, y_true = data
-        # print(f"X shape: {X.shape}")
-        # print(f"y_true shape: {y_true.shape}")
+        X = X.replace([np.inf, -np.inf], np.nan).astype(np.float64)
+        mask = ~X.isnull().any(axis=1)
+        X = X[mask]
+        y_true = y_true[mask]
 
         y_pred = model.predict(X)
         # print("after predict")
@@ -249,23 +290,35 @@ def evaluate_global_model(data: DataFrame, dataParams: dict, modelParams: dict) 
             "cm": confusion_matrix(y_true, y_pred),
             "accuracy": accuracy_score(y_true, y_pred),
             "mae": mean_absolute_error(y_true, y_pred),
-            "rmse": np.sqrt(mean_squared_error(y_true, y_pred))
+            "rmse": np.sqrt(mean_squared_error(y_true, y_pred)),
+            "precision": precision_score(y_true, y_pred, average='weighted'),
+            "recall": recall_score(y_true, y_pred, average='weighted'),
+            "f1_score": f1_score(y_true, y_pred, average='weighted')
         }
-    
-    testing_data = preprocess(data)
-    model = modelParams["model"]
-    clf = pickle.loads(model)
+    try:
+        testing_data = preprocess(data)
+        print(f"Testing data shape: {testing_data[0].shape}")
+        model = modelParams["model"]
+        clf = pickle.loads(model)
+        print(f"Model estimators: {clf.n_estimators}")
 
-    test_metrics = evaluate(clf, testing_data)
+        test_metrics = evaluate(clf, testing_data)
+        print("CHEGOU AQUI")
+    except Exception as e:
+        print(f"Error: {e}")
+        test_metrics = {"error": str(e)}
 
     return test_metrics
     
+
 def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
     # preprocessing
     from sklearn.model_selection import train_test_split
     from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import accuracy_score
     import cloudpickle
     import pickle
+    import numpy as np
 
     def preprocess(data: DataFrame) -> tuple[Dataset, Dataset]:
 
@@ -276,31 +329,50 @@ def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
         # Separate features and target variable (Q1)
         y = data[dataParams["target"]]
         X = data.drop(dataParams["ignored_columns"], axis=1)
+        # # Replace inf/-inf with NaN, cast to float64, drop NaNs
+        # X = X.replace([np.inf, -np.inf], np.nan).astype(np.float64)
+        # mask = ~X.isnull().any(axis=1)
+        # X = X[mask]
+        # y = y[mask]
+
 
         # Step 2: Split the data into training and testing sets
-        X_train, _, y_train, _ = train_test_split(X, y, train_size=modelParams["train_size"], stratify=y, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=modelParams["train_size"], stratify=y, random_state=42)
 
-        return X_train, y_train
+        return (X_train, y_train), (X_test, y_test)
 
     def train(model, training_data: tuple[pd.DataFrame, pd.Series]) -> RandomForestClassifier:
         X_train, y_train = training_data
+
         model.fit(X_train, y_train)
         return model
     
-    # Preprocess data
-    training_data = preprocess(data)
-    if modelParams["model"]:
-        model = modelParams["model"]
-        clf = pickle.loads(model)
-        clf.n_estimators += modelParams["n_incremental_estimators"]
-    else:
-        clf = RandomForestClassifier(random_state=42, n_estimators=modelParams["n_base_estimators"], warm_start=True)
+    def evaluate(model, data: tuple[pd.DataFrame, pd.Series]) -> dict:
+        X, y_true = data
+        y_pred = model.predict(X)
+        return {
+            "accuracy": accuracy_score(y_true, y_pred)
+        }
     
-    clf = train(clf, training_data)
+    # Preprocess data
+    try:
+        training_data, test_data = preprocess(data)
+        if modelParams["model"]:
+            model = modelParams["model"]
+            clf = pickle.loads(model)
+            clf.n_estimators += modelParams["n_incremental_estimators"]
+        else:
+            clf = RandomForestClassifier(random_state=42, n_estimators=modelParams["n_base_estimators"], warm_start=True)
+        clf = train(clf, training_data)
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"error": str(e)}
+    
+    # acc_train = evaluate(clf, training_data)["accuracy"]
+    # acc_test = evaluate(clf, test_data)["accuracy"]
+    # print(f"Train accuracy: {acc_train} - Test accuracy: {acc_test}: Difference: {acc_train - acc_test}")
 
     return {"model": cloudpickle.dumps(clf), "n_base_estimators": modelParams["n_base_estimators"], "n_incremental_estimators": modelParams["n_incremental_estimators"], "train_size": modelParams["train_size"], "sample_size": len(training_data[0]), "test_size": modelParams["test_size"]}
-
-
 
 def hello_world():
     print("FedLearning RF is installed!")
