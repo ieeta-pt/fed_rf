@@ -374,3 +374,5 @@ def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
 
     return {"model": cloudpickle.dumps(clf), "n_base_estimators": modelParams["n_base_estimators"], "n_incremental_estimators": modelParams["n_incremental_estimators"], "train_size": modelParams["train_size"], "sample_size": len(training_data[0]), "test_size": modelParams["test_size"]}
 
+def hello_world():
+    print("FedLearning RF is installed!")
