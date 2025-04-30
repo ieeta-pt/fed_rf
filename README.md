@@ -391,6 +391,7 @@ If you use **fed_rf_mk** in your work, please cite:
   pages     = {–},      % update when available
   doi       = {–}       % update when available
 }
+```
 
 ## License
 
