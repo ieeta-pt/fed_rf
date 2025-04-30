@@ -378,6 +378,20 @@ The package is organized as follows:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## How to cite
+
+If you use **fed_rf_mk** in your work, please cite:
+
+```bibtex
+@inproceedings{cotorobai2025federated,
+  title     = {A Federated Random Forest Solution for Secure Distributed Machine Learning},
+  author    = {Cotorobai, Alexandre and Silva, Jorge Miguel and Oliveira, Jos{\'e} Luis},
+  booktitle = {Proceedings of the IEEE International Conference on Bioinformatics and Biomedicine (CBMS)},
+  year      = {2025},
+  pages     = {–},      % update when available
+  doi       = {–}       % update when available
+}
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
