@@ -8,7 +8,7 @@ with open(path.join(working_dir, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='fed_rf_mk',
-    version='0.0.4',
+    version='0.0.5',
     author='Alexandre Cotorobai',
     url='https://github.com/ieeta-pt/fed_rf',
     description='A federated Random Forest implementation',
@@ -22,7 +22,7 @@ setup(
     install_requires=[
         # 'threadpoolctl>=3.5.0',
         # 'async-timeout>=5.0.1',
-        'syft>=0.9.1,<0.9.2',
+        'syft>=0.9.5,<0.9.6',
         'joblib>=1.4.2',
         'matplotlib>=3.9.0',
         # 'ipython>=8.26.0',
@@ -38,5 +38,6 @@ setup(
         'console_scripts': [
             'fed_rf_mk = fed_rf_mk.client:hello_world',
         ],
+        
     },
 )

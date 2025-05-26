@@ -2,7 +2,9 @@
 
 from threading import Thread, Event
 from time import sleep
-from datasites import spawn_server, check_and_approve_incoming_requests
+
+
+from fed_rf_mk.datasites import spawn_server, check_and_approve_incoming_requests
 
 
 class DataSiteThread(Thread):
@@ -58,7 +60,7 @@ class FLServer:
         print("Pending requests:")
         for idx, code in enumerate(self.client.code):
             if not code.status.approved:
-                print(f"[{idx}] Status: {code.status.get_status_message()}")
+                print(f"[{idx}] Status: {code.status}")
 
     def approve_request(self, request_index: int):
         """

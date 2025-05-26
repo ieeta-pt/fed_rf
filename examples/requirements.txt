@@ -1,0 +1,5 @@
+#syft==0.9.5
+ipykernel==6.29.5
+ucimlrepo==0.0.7
+#scikit-learn==1.6.1
+#cloudpickle==3.1.1

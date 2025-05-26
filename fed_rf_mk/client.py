@@ -4,12 +4,15 @@ import numpy.typing as npt
 from typing import Union, TypeVar, Any, TypedDict, TypeVar
 import pandas as pd
 from syft.service.policy.policy import MixedInputPolicy
-from utils import check_status_last_code_requests
 import pickle
 import cloudpickle
 import random
 import copy
 import concurrent.futures
+
+
+from fed_rf_mk.utils import check_status_last_code_requests
+
 
 DataFrame = TypeVar("pandas.DataFrame")
 NDArray = npt.NDArray[Any]
@@ -322,21 +325,12 @@ def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
 
     def preprocess(data: DataFrame) -> tuple[Dataset, Dataset]:
 
-        # Step 1: Prepare the data for training
-        # Drop rows with missing values in Q1
+
         data = data.dropna(subset=[dataParams["target"]])
 
-        # Separate features and target variable (Q1)
         y = data[dataParams["target"]]
         X = data.drop(dataParams["ignored_columns"], axis=1)
-        # # Replace inf/-inf with NaN, cast to float64, drop NaNs
-        # X = X.replace([np.inf, -np.inf], np.nan).astype(np.float64)
-        # mask = ~X.isnull().any(axis=1)
-        # X = X[mask]
-        # y = y[mask]
 
-
-        # Step 2: Split the data into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=modelParams["train_size"], stratify=y, random_state=42)
 
         return (X_train, y_train), (X_test, y_test)
@@ -354,7 +348,6 @@ def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
             "accuracy": accuracy_score(y_true, y_pred)
         }
     
-    # Preprocess data
     try:
         training_data, test_data = preprocess(data)
         if modelParams["model"]:
@@ -367,10 +360,6 @@ def ml_experiment(data: DataFrame, dataParams: dict, modelParams: dict) -> dict:
     except Exception as e:
         print(f"Error: {e}")
         return {"error": str(e)}
-    
-    # acc_train = evaluate(clf, training_data)["accuracy"]
-    # acc_test = evaluate(clf, test_data)["accuracy"]
-    # print(f"Train accuracy: {acc_train} - Test accuracy: {acc_test}: Difference: {acc_train - acc_test}")
 
     return {"model": cloudpickle.dumps(clf), "n_base_estimators": modelParams["n_base_estimators"], "n_incremental_estimators": modelParams["n_incremental_estimators"], "train_size": modelParams["train_size"], "sample_size": len(training_data[0]), "test_size": modelParams["test_size"]}
 
