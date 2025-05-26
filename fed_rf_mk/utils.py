@@ -19,7 +19,7 @@ def check_status_last_code_requests(datasites: dict[str, sy.DatasiteClient]) -> 
     """display status message of last code request sent to each datasite"""
     for name, datasite in datasites.items():
         print(f"Datasite: {name}")
-        display(datasite.code[-1].status.get_status_message())  # type: ignore
+        display(datasite.code[-1].status)  # type: ignore
 
 def approve_last_code_requests(datasites: dict[str, sy.DatasiteClient]) -> None:
     """Approve the last code request sent to each datasite"""

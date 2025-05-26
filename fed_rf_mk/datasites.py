@@ -3,13 +3,14 @@
 
 import syft as sy
 from syft.service.user.user import UserCreate, ServiceRole
-
-from datasets import generate_mock
-
 from threading import current_thread
 from time import sleep
 from typing import Optional
 import pandas as pd
+
+
+from fed_rf_mk.datasets import generate_mock
+
 
 def create_syft_dataset(name: str, data_path: str, mock_path: str) -> Optional[sy.Dataset]:
     """Creates a new syft.Dataset for the selected datasite/dataset.
