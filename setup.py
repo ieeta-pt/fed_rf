@@ -8,7 +8,7 @@ with open(path.join(working_dir, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='fed_rf_mk',
-    version='0.0.5rc3',
+    version='0.0.5',
     author='Alexandre Cotorobai',
     url='https://github.com/ieeta-pt/fed_rf',
     description='A federated Random Forest implementation',
