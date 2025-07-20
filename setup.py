@@ -8,7 +8,7 @@ with open(path.join(working_dir, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='fed_rf_mk',
-    version='0.0.5',
+    version='0.0.6',
     author='Alexandre Cotorobai',
     url='https://github.com/ieeta-pt/fed_rf',
     description='A federated Random Forest implementation',
@@ -33,6 +33,7 @@ setup(
         'pandas>=2.2.2',
         # 'ctgan>=0.10.2',
         'cloudpickle>=3.1.1',
+        'shap==0.48.0',
     ],
     entry_points={
         'console_scripts': [
