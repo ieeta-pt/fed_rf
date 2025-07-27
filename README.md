@@ -384,12 +384,14 @@ If you use **fed_rf_mk** in your work, please cite:
 
 ```bibtex
 @inproceedings{cotorobai2025federated,
-  title     = {A Federated Random Forest Solution for Secure Distributed Machine Learning},
-  author    = {Cotorobai, Alexandre and Silva, Jorge Miguel and Oliveira, Jos{\'e} Luis},
-  booktitle = {Proceedings of the IEEE International Conference on Bioinformatics and Biomedicine (CBMS)},
-  year      = {2025},
-  pages     = {–},      % update when available
-  doi       = {–}       % update when available
+  author={Cotorobai, Alexandre and Silva, Jorge Miguel and Oliveira, José Luis},
+  booktitle={2025 IEEE 38th International Symposium on Computer-Based Medical Systems (CBMS)}, 
+  title={A Federated Random Forest Solution for Secure Distributed Machine Learning}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={769-774},
+  doi={10.1109/CBMS65348.2025.00159}}
 }
 ```
 
