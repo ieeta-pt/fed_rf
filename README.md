@@ -395,6 +395,9 @@ If you use **fed_rf_mk** in your work, please cite:
 }
 ```
 
+- Zenodo release with slides: https://doi.org/10.5281/zenodo.16539345
+
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
