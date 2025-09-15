@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import logging
 import syft as sy
 from syft.service.user.user import UserCreate, ServiceRole
+
+from datasets import generate_mock
+
 from threading import current_thread
 from time import sleep
 from typing import Optional
 import pandas as pd
 
-
-from fed_rf_mk.datasets import generate_mock
+logger = logging.getLogger(__name__)
 
 
 def create_syft_dataset(name: str, data_path: str, mock_path: str) -> Optional[sy.Dataset]:
@@ -17,17 +20,30 @@ def create_syft_dataset(name: str, data_path: str, mock_path: str) -> Optional[s
     None is returned is the matching dataset cannot be found/load from disk.
     """
     if data_path is None:
+        logger.error("No data_path provided for dataset '%s'", name)
         return None
-    
-    data = pd.read_csv(data_path)
 
-    if data is None:
+    try:
+        data = pd.read_csv(data_path)
+    except Exception as e:
+        logger.error("Failed to read CSV at '%s' for dataset '%s': %s", data_path, name, e)
         return None
-    
-    if mock_path is not None:
-        mock = pd.read_csv(mock_path)
-    else:
-        mock = generate_mock(data)
+
+    # Generate or load mock data
+    try:
+        if mock_path is not None:
+            mock = pd.read_csv(mock_path)
+        else:
+            mock = generate_mock(data)
+    except Exception as e:
+        logger.warning(
+            "Mock generation/load failed for '%s' (data=%s, mock=%s): %s. Falling back to data.head(100).",
+            name,
+            data_path,
+            mock_path,
+            e,
+        )
+        mock = data.head(100)
 
     dataset = sy.Dataset(
         name=name,
@@ -91,8 +107,18 @@ def spawn_server(name: str, port: int = 8080, data_path: str = None, mock_path: 
     if not ds is None:
         client.upload_dataset(ds)
 
-    print(f"Datasite {name} is up and running: {data_site.url}:{data_site.port}")
+    logger.info("Datasite %s is up and running: %s:%s", name, data_site.url, data_site.port)
     return data_site, client
+
+# --- Server-side analysis policy (module-scoped) ---
+ANALYSIS_ALLOWED: bool = False
+
+def set_analysis_allowed(enabled: bool) -> None:
+    global ANALYSIS_ALLOWED
+    ANALYSIS_ALLOWED = bool(enabled)
+
+def is_analysis_allowed() -> bool:
+    return ANALYSIS_ALLOWED
 
 
 def check_and_approve_incoming_requests(client):
@@ -107,6 +133,10 @@ def check_and_approve_incoming_requests(client):
     while not current_thread().stopped():  # type: ignore
         requests = client.requests
         for r in filter(lambda r: r.status.value != 2, requests):  # 2 == APPROVED
+            # Server is authoritative for analysis permission. We approve requests
+            # regardless; the remote function will consult is_analysis_allowed().
+            # You can add request inspection here if you want to reject analysis
+            # attempts outright when ANALYSIS_ALLOWED is False.
             r.approve(approve_nested=True)
-            # print("New Request approved in ")
+            logger.info("Approved incoming request (nested approval)")
         sleep(1)

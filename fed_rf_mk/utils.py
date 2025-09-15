@@ -1,6 +1,7 @@
 """Collection of utility functions used throughout the ML experiments
 to reduce boilerplate in the notebooks."""
 
+import logging
 import syft as sy
 import joblib
 import matplotlib.pyplot as plt
@@ -15,11 +16,20 @@ from itertools import product
 from sklearn.metrics import ConfusionMatrixDisplay
 
 
+logger = logging.getLogger(__name__)
+
+
 def check_status_last_code_requests(datasites: dict[str, sy.DatasiteClient]) -> None:
-    """display status message of last code request sent to each datasite"""
+    """Display status of the last code request per datasite, safely handling empty queues."""
     for name, datasite in datasites.items():
-        print(f"Datasite: {name}")
-        display(datasite.code[-1].status)  # type: ignore
+        logger.info("Datasite: %s", name)
+        try:
+            if not getattr(datasite, "code", None) or len(datasite.code) == 0:
+                logger.info("No code requests yet for '%s'", name)
+                continue
+            display(datasite.code[-1].status)  # type: ignore
+        except Exception as e:
+            logger.error("Error retrieving last code request for '%s': %s", name, e)
 
 def approve_last_code_requests(datasites: dict[str, sy.DatasiteClient]) -> None:
     """Approve the last code request sent to each datasite"""

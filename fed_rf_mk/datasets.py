@@ -1,7 +1,7 @@
 
 import pandas as pd
-# from ctgan import CTGAN
 
+# Disabled generation of synthetic data because it was too resource-intensive for POC demos and testing
 def generate_mock(data: pd.DataFrame) -> pd.DataFrame:
     return data
     discrete_columns = data.columns.tolist()
