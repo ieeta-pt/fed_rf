@@ -16,10 +16,15 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
         precision_score,
         recall_score,
         f1_score,
+        log_loss,
+        roc_auc_score,
+        average_precision_score,
     )
     import pickle
     import numpy as np
     import pandas as pd
+    from sklearn.preprocessing import label_binarize
+    from scipy.special import expit
 
     def preprocess(data) -> tuple[tuple[pd.DataFrame, pd.Series], tuple[pd.DataFrame, pd.Series]]:
         # Step 1: Prepare the data for training
@@ -61,7 +66,6 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
             "f1_score": f1_score(y_true, y_pred, average='weighted'),
         }
 
-    # --- Step 3 helpers: XGB ensemble via weighted margin averaging ---
     def _compute_metrics_from_preds(y_true, y_pred):
         return {
             "mcc": mcc(y_true, y_pred),
@@ -73,6 +77,77 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
             "recall": recall_score(y_true, y_pred, average='weighted'),
             "f1_score": f1_score(y_true, y_pred, average='weighted'),
         }
+
+    def _compute_probability_metrics(y_true, proba, classes):
+        metrics = {}
+        y_true_arr = np.asarray(y_true)
+        classes_arr = np.asarray(classes)
+
+        try:
+            metrics["log_loss"] = float(log_loss(y_true_arr, proba, labels=classes_arr))
+        except ValueError:
+            metrics["log_loss"] = None
+
+        y_indicator = label_binarize(y_true_arr, classes=classes_arr)
+        if y_indicator.shape[1] == 1:
+            y_indicator = np.hstack([1 - y_indicator, y_indicator])
+
+        diff = y_indicator - proba
+        metrics["brier_score"] = float(np.mean(np.sum(diff * diff, axis=1)))
+
+        unique_labels = np.unique(y_true_arr)
+
+        if proba.shape[1] == 2:
+            if unique_labels.size > 1:
+                try:
+                    metrics["roc_auc"] = float(
+                        roc_auc_score(y_true_arr, proba[:, 1], labels=classes_arr)
+                    )
+                except ValueError:
+                    metrics["roc_auc"] = None
+
+                try:
+                    metrics["average_precision"] = float(
+                        average_precision_score(
+                            (y_true_arr == classes_arr[1]).astype(int),
+                            proba[:, 1],
+                        )
+                    )
+                except ValueError:
+                    metrics["average_precision"] = None
+            else:
+                metrics["roc_auc"] = None
+                metrics["average_precision"] = None
+        else:
+            if unique_labels.size > 1:
+                try:
+                    metrics["roc_auc"] = float(
+                        roc_auc_score(
+                            y_true_arr,
+                            proba,
+                            multi_class="ovr",
+                            average="weighted",
+                            labels=classes_arr,
+                        )
+                    )
+                except ValueError:
+                    metrics["roc_auc"] = None
+
+                try:
+                    metrics["average_precision"] = float(
+                        average_precision_score(
+                            y_indicator,
+                            proba,
+                            average="weighted",
+                        )
+                    )
+                except ValueError:
+                    metrics["average_precision"] = None
+            else:
+                metrics["roc_auc"] = None
+                metrics["average_precision"] = None
+
+        return metrics
 
     def _xgb_weighted_margin_proba(ensemble_members, X):
         """
@@ -88,7 +163,8 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
         # Normalize weights; fallback to uniform if sum <= 0
         ws = np.array([float(w) for _, w in ensemble_members], dtype=float)
         ws = ws / ws.sum() if ws.sum() > 0 else np.full(len(ws), 1.0 / max(len(ws), 1))
-
+        print(f"Using ensemble weights: {ws}")
+        
         margins_sum = None
         classes_ref = None
         n_classes = None
@@ -128,19 +204,112 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
                     m = m[:, order]
                 margins_sum = (w * m) if margins_sum is None else (margins_sum + w * m)
 
+        logits = margins_sum
+
         # Convert aggregated margins to probabilities
         if n_classes == 2 and margins_sum.shape[1] == 1:
             # Binary: have aggregated logit for positive class; derive probabilities
             z = margins_sum.ravel()
-            p1 = 1.0 / (1.0 + np.exp(-z))
+            p1 = expit(z)
             proba = np.column_stack([1 - p1, p1])
+            logits = z.reshape(-1, 1)
         else:
             # Multi-class: softmax over aggregated logits
             m = margins_sum - margins_sum.max(axis=1, keepdims=True)
             e = np.exp(m)
             proba = e / e.sum(axis=1, keepdims=True)
+            logits = margins_sum
 
-        return proba, classes_ref
+        return proba, classes_ref, logits
+
+    def _fit_binary_platt_logistic(logits_train, y_train, classes_ref):
+        import numpy as np
+        from sklearn.linear_model import LogisticRegression
+
+        if logits_train is None or logits_train.size == 0:
+            return None, {"status": "skipped", "reason": "empty_logits"}
+
+        y_arr = np.asarray(y_train)
+        unique = np.unique(y_arr)
+        if unique.size < 2:
+            return None, {"status": "skipped", "reason": "single_class_calibration"}
+
+        # Map labels to {0,1} following classes_ref ordering
+        pos_label = classes_ref[1]
+        y_bin = (y_arr == pos_label).astype(int)
+
+        clf = LogisticRegression(max_iter=200, solver="liblinear")
+        clf.fit(logits_train.reshape(-1, 1), y_bin)
+
+        class_index = {cls: idx for idx, cls in enumerate(clf.classes_)}
+        if 0 not in class_index or 1 not in class_index:
+            return None, {"status": "skipped", "reason": "logistic_missing_class"}
+
+        def calibrate_fn(logits_eval):
+            logits_eval = np.asarray(logits_eval).reshape(-1, 1)
+            probs = clf.predict_proba(logits_eval)
+            # Align to classes_ref ordering (negative, positive)
+            negative = probs[:, class_index[0]].reshape(-1, 1)
+            positive = probs[:, class_index[1]].reshape(-1, 1)
+            return np.hstack([negative, positive])
+
+        summary = {
+            "status": "applied",
+            "method": "platt_logistic",
+            "coef": float(clf.coef_[0, 0]),
+            "intercept": float(clf.intercept_[0]),
+        }
+
+        return calibrate_fn, summary
+
+    def _fit_temperature_scaler(logits_train, y_train, classes_ref):
+        import numpy as np
+        from scipy.optimize import minimize_scalar
+        from scipy.special import logsumexp
+
+        if logits_train is None or logits_train.size == 0:
+            return None, {"status": "skipped", "reason": "empty_logits"}
+
+        logits_arr = np.asarray(logits_train)
+        y_arr = np.asarray(y_train)
+        class_to_idx = {cls: idx for idx, cls in enumerate(classes_ref)}
+
+        try:
+            y_idx = np.array([class_to_idx[cls] for cls in y_arr], dtype=int)
+        except KeyError:
+            return None, {"status": "skipped", "reason": "label_not_in_classes"}
+
+        if logits_arr.ndim != 2 or logits_arr.shape[1] != len(classes_ref):
+            return None, {"status": "skipped", "reason": "logits_shape_mismatch"}
+
+        def nll(temp):
+            temp = max(temp, 1e-3)
+            scaled = logits_arr / temp
+            log_probs = scaled - logsumexp(scaled, axis=1, keepdims=True)
+            return -float(np.mean(log_probs[np.arange(logits_arr.shape[0]), y_idx]))
+
+        result = minimize_scalar(nll, bounds=(0.05, 50.0), method="bounded")
+        if not result.success:
+            return None, {"status": "skipped", "reason": "opt_failure"}
+
+        temperature = float(max(result.x, 1e-3))
+
+        def calibrate_fn(logits_eval):
+            logits_eval = np.asarray(logits_eval)
+            scaled = logits_eval / temperature
+            shifted = scaled - scaled.max(axis=1, keepdims=True)
+            exps = np.exp(shifted)
+            return exps / exps.sum(axis=1, keepdims=True)
+
+        summary = {
+            "status": "applied",
+            "method": "temperature_scaling",
+            "temperature": temperature,
+            "opt_success": bool(result.success),
+            "opt_fun": float(result.fun),
+        }
+
+        return calibrate_fn, summary
 
     try:
         X_test, y_test = preprocess(data)
@@ -157,15 +326,111 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
             X_eval = X_test[mask]
             y_eval = y_test[mask]
 
-            proba, classes = _xgb_weighted_margin_proba(modelParams["ensemble_members"], X_eval)
-            y_pred = classes[np.argmax(proba, axis=1)]
-            test_metrics = _compute_metrics_from_preds(y_eval, y_pred)
+            proba_raw, classes = None, None
+            logits = None
+            try:
+                proba_raw, classes, logits = _xgb_weighted_margin_proba(
+                    modelParams["ensemble_members"], X_eval
+                )
+            except Exception as exc:  # pragma: no cover - defensive safety net
+                raise RuntimeError(f"Failed to compute ensemble probabilities: {exc}") from exc
 
-        else:
+            calibration_cfg = modelParams.get("calibration", {}) or {}
+            calibration_enabled = bool(calibration_cfg.get("enabled", True))
+            calibration_fraction = float(calibration_cfg.get("fraction", 0.2))
+            min_samples = int(calibration_cfg.get("min_samples", 25))
+            binary_method = (calibration_cfg.get("binary_method") or "platt_logistic").lower()
+            multiclass_method = (
+                calibration_cfg.get("multiclass_method") or "temperature_scaling"
+            ).lower()
+
+            proba_eval = proba_raw
+            y_eval_hold = y_eval
+            calibration_summary = {
+                "status": "skipped",
+                "reason": "disabled" if not calibration_enabled else "not_requested",
+            }
+
+            n_eval = len(y_eval)
+            is_binary = proba_raw.shape[1] == 2
+
+            if (
+                calibration_enabled
+                and 0 < calibration_fraction < 1
+                and n_eval >= max(min_samples, 4)
+                and logits is not None
+            ):
+                idx_all = np.arange(n_eval)
+                stratify = y_eval if isinstance(y_eval, pd.Series) else pd.Series(y_eval)
+                try:
+                    stratify_for_split = stratify if stratify.nunique() > 1 else None
+                except Exception:
+                    stratify_for_split = None
+
+                try:
+                    idx_cal, idx_hold = train_test_split(
+                        idx_all,
+                        train_size=calibration_fraction,
+                        stratify=stratify_for_split,
+                        random_state=42,
+                    )
+                except ValueError:
+                    idx_cal, idx_hold = train_test_split(
+                        idx_all,
+                        train_size=calibration_fraction,
+                        random_state=42,
+                    )
+
+                if idx_cal.size >= max(min_samples, 2) and idx_hold.size > 0:
+                    if is_binary and binary_method == "platt_logistic":
+                        calibrator, summary = _fit_binary_platt_logistic(
+                            logits[idx_cal], y_eval.iloc[idx_cal], classes
+                        )
+                    elif (not is_binary) and multiclass_method == "temperature_scaling":
+                        calibrator, summary = _fit_temperature_scaler(
+                            logits[idx_cal], y_eval.iloc[idx_cal], classes
+                        )
+                    else:
+                        calibrator, summary = None, {
+                            "status": "skipped",
+                            "reason": "unsupported_method",
+                            "requested_binary_method": binary_method,
+                            "requested_multiclass_method": multiclass_method,
+                        }
+
+                    if calibrator is not None:
+                        proba_eval = calibrator(logits[idx_hold])
+                        y_eval_hold = y_eval.iloc[idx_hold]
+                        calibration_summary = {
+                            **summary,
+                            "calibration_fraction": float(calibration_fraction),
+                            "calibration_size": int(idx_cal.size),
+                            "holdout_size": int(idx_hold.size),
+                        }
+                    else:
+                        calibration_summary = summary
+                        proba_eval = proba_raw
+                        y_eval_hold = y_eval
+                else:
+                    calibration_summary = {
+                        "status": "skipped",
+                        "reason": "insufficient_samples",
+                        "calibration_fraction": float(calibration_fraction),
+                        "n_eval": int(n_eval),
+                    }
+
+            y_pred = classes[np.argmax(proba_eval, axis=1)]
+            test_metrics = _compute_metrics_from_preds(y_eval_hold, y_pred)
+            test_metrics.update(_compute_probability_metrics(y_eval_hold, proba_eval, classes))
+            test_metrics["calibration"] = calibration_summary
+
+        elif modelParams.get("model_type") == "rf" and modelParams.get("model") is not None:
             # Fallback: single merged RF or single XGB model
             model = modelParams["model"]
             clf = pickle.loads(model)
             test_metrics = evaluate(clf, (X_test, y_test))
+        else:
+            raise ValueError("No valid model or ensemble members provided for evaluation.")
 
     except Exception as e:
         print("Evaluation error: %s", e)
