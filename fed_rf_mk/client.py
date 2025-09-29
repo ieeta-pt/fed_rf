@@ -248,3 +248,7 @@ class FLClient:
         """Legacy method - use start_analysis() instead."""
         logger.warning("start_shap_analysis() is deprecated. Use start_analysis() instead.")
         self.start_analysis()
+
+
+def hello_world() -> str:
+    return "Hello! This is fed_rf_mk client module. Installed correctly.\nVersion 1.0.0.\nMade by Alexandre Cotorobai."
