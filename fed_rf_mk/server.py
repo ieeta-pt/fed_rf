@@ -3,7 +3,7 @@
 import logging
 from threading import Thread, Event
 from time import sleep
-from datasites import (
+from fed_rf_mk.datasites import (
     spawn_server,
     check_and_approve_incoming_requests,
     set_analysis_allowed,

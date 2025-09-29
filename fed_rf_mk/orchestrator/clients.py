@@ -10,8 +10,8 @@ try:
     from ..utils import check_status_last_code_requests as _check_status_last_code_requests
     from ..remote_tasks import ml_experiment, evaluate_global_model
 except ImportError:  # pragma: no cover - fallback when imported as top-level module
-    from utils import check_status_last_code_requests as _check_status_last_code_requests  # type: ignore
-    from remote_tasks import ml_experiment, evaluate_global_model  # type: ignore
+    from fed_rf_mk.utils import check_status_last_code_requests as _check_status_last_code_requests  # type: ignore
+    from fed_rf_mk.remote_tasks import ml_experiment, evaluate_global_model  # type: ignore
 
 logger = logging.getLogger(__name__)
 

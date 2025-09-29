@@ -17,11 +17,11 @@ try:
     from .aggregation.models import ModelAggregator
 except ImportError:  # pragma: no cover - fallback for script-style usage
     # Script-style import (when running from inside package directory)
-    from orchestrator.clients import DataSiteManager  # type: ignore
-    from orchestrator.weights import WeightManager  # type: ignore
-    from handlers.shap import SHAPHandler  # type: ignore
-    from handlers.pfi import PFIHandler  # type: ignore
-    from aggregation.models import ModelAggregator  # type: ignore
+    from fed_rf_mk.orchestrator.clients import DataSiteManager  # type: ignore
+    from fed_rf_mk.orchestrator.weights import WeightManager  # type: ignore
+    from fed_rf_mk.handlers.shap import SHAPHandler  # type: ignore
+    from fed_rf_mk.handlers.pfi import PFIHandler  # type: ignore
+    from fed_rf_mk.aggregation.models import ModelAggregator  # type: ignore
 
 logger = logging.getLogger(__name__)
 

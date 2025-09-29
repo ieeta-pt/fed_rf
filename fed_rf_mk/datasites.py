@@ -5,7 +5,7 @@ import logging
 import syft as sy
 from syft.service.user.user import UserCreate, ServiceRole
 
-from datasets import generate_mock
+from fed_rf_mk.datasets import generate_mock
 
 from threading import current_thread
 from time import sleep
