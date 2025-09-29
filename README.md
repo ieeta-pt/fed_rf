@@ -1,408 +1,343 @@
 # fed_rf_mk
 
+# Federated Random Forests and XGBoost with PySyft
+
+Privacy-preserving federated learning for tree-based models (RandomForest, XGBoost) using PySyft. Includes orchestration client, datasite server utilities, remote training/evaluation functions, model aggregation, and explainability (SHAP, PFI).
 [![PyPI version](https://badge.fury.io/py/fed-rf-mk.svg)](https://badge.fury.io/py/fed-rf-mk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Python package for implementing federated learning with Random Forests using [PySyft](https://github.com/OpenMined/PySyft). This implementation allows multiple parties to collaboratively train Random Forest models without sharing their raw data, maintaining privacy and confidentiality while leveraging the combined knowledge of all participants.
+## Table of Contents
+- What’s New
+- Overview
+- Repository Structure
+- Installation
+- Quickstart
+- Detailed Usage
+  - Parameters
+  - RandomForest example
+  - XGBoost example
+- Data
+- Models & Experiments
+- Outputs & Logging
+- Extending the Project
+- Troubleshooting / FAQ
+- Changelog
+- Citation / License / Acknowledgements
+- To‑Verify
 
-## Features
+## What’s New
+- Modularized architecture:
+  - `remote_tasks.py` for remote `ml_experiment` and `evaluate_global_model`.
+  - Orchestrator modules for datasites and weights.
+  - Handlers for explainability (SHAP, PFI).
+  - Aggregation for RF and evaluation-time ensembling for XGB.
+- Configurable explainability:
+  - Toggle SHAP/PFI and tune `shap_sample_size`, `pfi_n_repeats`.
+- Nested hyperparameters:
+  - Use `model_params` for model-specific settings (e.g., XGB’s `learning_rate`, `max_depth`, device).
+- Safer utilities:
+  - Better logging and guards for datasite IO and request status.
+- Tests + CI:
+  - Unit tests for weights, aggregation, remote tasks, plus pre-commit hooks and GitHub Actions.
 
-- Secure federated training of Random Forest classifiers using PySyft's framework
-- Client-server architecture for federated learning
-- Weighted model averaging based on client importance
-- Incremental learning approach for multi-round training
-- Evaluation of global models on local test data
-- Support for both training and evaluation clients
-- Configurable model parameters
-- Simple API for both client and server implementations
+## Overview
+This project demonstrates a practical federated learning workflow on top of PySyft. It supports:
+- Training RF/XGB on multiple datasites without moving raw data.
+- Aggregating models (RF) and evaluating ensembles (XGB).
+- Explainability across silos via SHAP and PFI with weighted averaging.
+
+High-level flow:
+
+```mermaid
+flowchart LR
+  A[FLClient] --> B[DataSiteManager]
+  B -->|Syft requests| C[(Datasites)]
+  C -->|Run| D[remote_tasks.ml_experiment]
+  C -->|Run| E[remote_tasks.evaluate_global_model]
+  A --> F[WeightManager]
+  A --> G[ModelAggregator]
+  A --> H[SHAPHandler]
+  A --> I[PFIHandler]
+  D -->|return model + analysis| G
+  D -->|return SHAP| H
+  D -->|return PFI| I
+  G -->|merged model/ensemble| A
+  H -->|averaged SHAP| A
+  I -->|averaged PFI| A
+```
+
+## Repository Structure
+- `package-pysyft/client.py` — FL client orchestrator (connects to datasites, coordinates training/evaluation).
+- `package-pysyft/server.py` — server utilities (spawn datasites, manage approvals).
+- `package-pysyft/datasites.py` — launch datasites, upload CSV asset, server-side policy toggles.
+- `package-pysyft/remote_tasks.py` — remote functions:
+  - `ml_experiment(data, dataParams, modelParams)`
+  - `evaluate_global_model(data, dataParams, modelParams)`
+- `package-pysyft/orchestrator/` — orchestrator modules:
+  - `clients.py` — `DataSiteManager` (connect/send requests/check status).
+  - `weights.py` — robust `WeightManager` (normalization with None/negative handling).
+- `package-pysyft/aggregation/models.py` — `ModelAggregator` (RF estimator merge, XGB ensemble members).
+- `package-pysyft/handlers/` — `SHAPHandler`, `PFIHandler`.
+- `package-pysyft/analysis/` — notebooks and pipelines, e.g., `2-testing_aids_clinical.ipynb`.
+- `tests/` — unit tests for weights, aggregation, remote tasks.
+- `.github/workflows/ci.yml` — lint + tests CI.
+- `pyproject.toml` — build config and dependencies.
 
 ## Installation
+Requirement: Python 3.10+
 
-### Prerequisites
-
-- Python 3.10.12 or higher
-
-### Installing from PyPI
-
+Install dev (recommended for running examples and tests):
 ```bash
-pip install fed-rf-mk
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install .[dev]
+pre-commit install
 ```
 
-### Installing from Source
-
+Minimal install:
 ```bash
-git clone https://github.com/ieeta-pt/fed_rf.git
-cd fed_rf
-pip install -e .
+pip install .
 ```
 
-## Federated Learning Workflow
+Key runtime deps:
+- syft==0.9.1
+- pandas>=2.0
+- scikit-learn>=1.3
+- cloudpickle>=3.0
+- shap>=0.44
+- xgboost>=2.0
 
-The complete federated learning process follows these steps:
-
-### 1. Launch Data Silos (Servers)
-
-First, start all server instances that will participate in the federated learning process:
+## Quickstart
+Start two train datasites and one eval datasite (example ports/paths):
 
 ```python
-from fed_rf_mk.server import FLServer
+from package_pysyft.server import FLServer
 import threading
 
-# Start the first server
-server1 = FLServer("silo1", 8080, "path/to/data1.csv", auto_accept=False)
-server_thread1 = threading.Thread(target=server1.start, daemon=True)
-server_thread1.start()
-
-# Start the second server
-server2 = FLServer("silo2", 8081, "path/to/data2.csv", auto_accept=False)
-server_thread2 = threading.Thread(target=server2.start, daemon=True)
-server_thread2.start()
-
-# Start the evaluation server
-server3 = FLServer("eval_silo", 8082, "path/to/eval_data.csv", auto_accept=False)
-server_thread3 = threading.Thread(target=server3.start, daemon=True)
-server_thread3.start()
+servers = [
+  FLServer("silo1", 8080, "train_datasets/aids_clinical/part_0.csv", auto_accept=True, analysis_allowed=True),
+  FLServer("silo2", 8081, "train_datasets/aids_clinical/part_1.csv", auto_accept=True, analysis_allowed=True),
+  FLServer("eval_silo", 8082, "train_datasets/aids_clinical/part_2.csv", auto_accept=True, analysis_allowed=True),
+]
+for s in servers:
+    threading.Thread(target=s.start, daemon=True).start()
 ```
 
-### 2. Set Up the Federated Learning Client
-
-Next, initialize the client and connect to all participating servers:
+Train and evaluate with the client:
 
 ```python
-from fed_rf_mk.client import FLClient
-
-# Initialize client
-fl_client = FLClient()
-
-# Add training clients
-fl_client.add_train_client(
-    name="silo1",
-    url="http://localhost:8080", 
-    email="fedlearning@rf.com", 
-    password="your_password"
-)
-fl_client.add_train_client(
-    name="silo2",
-    url="http://localhost:8081", 
-    email="fedlearning@rf.com", 
-    password="your_password"
-)
-
-# Add evaluation client
-fl_client.add_eval_client(
-    name="eval_silo",
-    url="http://localhost:8082", 
-    email="fedlearning@rf.com", 
-    password="your_password"
-)
-```
-
-### 3. Configure Data and Model Parameters
-
-Define the parameters for your data and the Random Forest model:
-
-```python
-# Define data parameters
-data_params = {
-    "target": "target_column",              # Target column name
-    "ignored_columns": ["id", "timestamp"]  # Columns to exclude from training
-}
-fl_client.set_data_params(data_params)
-
-# Define model parameters
-model_params = {
-    "model": None,                  # Initial model (None for first round)
-    "n_base_estimators": 100,       # Number of trees for the initial model
-    "n_incremental_estimators": 10, # Number of trees to add in each round
-    "train_size": 0.8,              # Proportion of data for training
-    "test_size": 0.2,               # Proportion of data for testing
-    "sample_size": None,            # Sample size (None uses all data)
-    "fl_epochs": 3                  # Number of federated learning rounds
-}
-fl_client.set_model_params(model_params)
-```
-
-### 4. Send Requests to Servers
-
-Send the federated learning request to all participating servers:
-
-```python
-# Send the request
-fl_client.send_request()
-
-# Check the status of sent requests
-fl_client.check_status_last_code_requests()
-```
-
-### 5. Approve Requests on Servers
-
-Each server needs to review and approve the federated learning request before training can begin:
-
-```python
-# On server1
-server1.list_pending_requests()  # See all pending requests
-server1.inspect_request(0)       # Examine request details (code, parameters)
-server1.approve_request(0)       # Approve request #0
-
-# On server2
-server2.approve_request(0)
-
-# On server3 (evaluation server)
-server3.approve_request(0)
-```
-
-### 6. Run Federated Training
-
-After all servers have approved the request, start the federated training process:
-
-```python
-# Start federated training
-fl_client.run_model()
-```
-
-This will:
-1. Train local models on each client's data
-2. Aggregate the models using weighted averaging
-3. Run for multiple epochs if specified in model parameters
-
-### 7. Evaluate the Federated Model
-
-Finally, evaluate the performance of your federated model on the evaluation data:
-
-```python
-# Run evaluation
-evaluation_results = fl_client.run_evaluate()
-print(evaluation_results)
-```
-
-## Example Use Case: Clinical Trials Analysis
-
-The example below demonstrates how to use federated random forests for analyzing clinical trial data where data is distributed across multiple sites:
-
-```python
-# 1. Distribute data across sites (based on the attached example notebook)
-from ucimlrepo import fetch_ucirepo
-import pandas as pd
-from sklearn.utils import shuffle
-
-# Fetch dataset
-aids_clinical_trials_group_study_175 = fetch_ucirepo(id=890)
-
-# Extract data
-X = aids_clinical_trials_group_study_175.data.features
-y = aids_clinical_trials_group_study_175.data.targets
-df = pd.concat([X, y], axis=1)
-
-# Separate classes for balanced distribution
-df_majority = df[df["cid"] == 0]  # cid = 0 (majority)
-df_minority = df[df["cid"] == 1]  # cid = 1 (minority)
-
-# Shuffle and split data
-df_majority = shuffle(df_majority, random_state=42).reset_index(drop=True)
-df_minority = shuffle(df_minority, random_state=42).reset_index(drop=True)
-
-# Create partitions
-N = 3  # Number of partitions
-TRAIN_RATIO = 0.8  # 80% training, 20% testing
-
-# Split data into partitions and save
-# (Partition code omitted for brevity - see notebook for details)
-
-# 2. Launch servers for each data partition
-from fed_rf_mk.server import FLServer
-import threading
-
-# Server for partition 0
-server1 = FLServer("aids_clinical_part_0", 8080, "train_datasets/aids_clinical/part_0.csv", auto_accept=False)
-server_thread1 = threading.Thread(target=server1.start, daemon=True)
-server_thread1.start()
-
-# Server for partition 1
-server2 = FLServer("aids_clinical_part_1", 8081, "train_datasets/aids_clinical/part_1.csv", auto_accept=False)
-server_thread2 = threading.Thread(target=server2.start, daemon=True)
-server_thread2.start()
-
-# Server for test partition (evaluation)
-server3 = FLServer("aids_clinical_part_2", 8082, "train_datasets/aids_clinical/part_2.csv", auto_accept=False)
-server_thread3 = threading.Thread(target=server3.start, daemon=True)
-server_thread3.start()
-
-# 3. Set up client to coordinate federated learning
-from fed_rf_mk.client import FLClient
+from package_pysyft.client import FLClient
 
 rf_client = FLClient()
+rf_client.add_train_client("silo1", "http://localhost:8080", "fedlearning@rf.com", "****", weight=0.6)
+rf_client.add_train_client("silo2", "http://localhost:8081", "fedlearning@rf.com", "****", weight=0.4)
+rf_client.add_eval_client("eval_silo", "http://localhost:8082", "fedlearning@rf.com", "****")
 
-# Add training clients
-rf_client.add_train_client(name="aids_clinical_part_0", url="http://localhost:8080", 
-                          email="fedlearning@rf.com", password="your_password")
-rf_client.add_train_client(name="aids_clinical_part_1", url="http://localhost:8081", 
-                          email="fedlearning@rf.com", password="your_password")
-
-# Add evaluation client
-rf_client.add_eval_client(name="aids_clinical_part_2", url="http://localhost:8082", 
-                         email="fedlearning@rf.com", password="your_password")
-
-# 4. Configure learning parameters
-data_params = {
-    "target": "cid",
-    "ignored_columns": ["cid"]
+dataParams = {
+  "target": "cid",
+  "ignored_columns": ["cid"]
 }
 
-model_params = {
-    "model": None,
-    "n_base_estimators": 10,
-    "n_incremental_estimators": 2,
-    "train_size": 0.7,
-    "test_size": 0.5,
-    "sample_size": None,
-    "fl_epochs": 1
+# RandomForest example (top-level hyperparams for RF)
+modelParams = {
+  "model": None,
+  "model_type": "rf",
+  "n_base_estimators": 100,
+  "n_incremental_estimators": 20,
+  "train_size": 0.8,
+  "test_size": 0.8,
+  "fl_epochs": 1,
 }
 
-rf_client.set_data_params(data_params)
-rf_client.set_model_params(model_params)
+rf_client.set_data_params(dataParams)
+rf_client.set_model_params(modelParams)
 
-# 5. Send request to all servers
-rf_client.send_request()
-
-# 6. Approve requests on servers
-server1.list_pending_requests()  # Check pending requests
-server1.inspect_request(0)       # Inspect request details
-server1.approve_request(0)       # Approve the request
-
-server2.approve_request(0)
-server3.approve_request(0)
-
-# 7. Train federated model
 rf_client.run_model()
-
-# 8. Evaluate model
-evaluation_results = rf_client.run_evaluate()
-print(evaluation_results)
+results = rf_client.run_evaluate()
+print(results)
 ```
 
-## Client Weighting
+## Detailed Usage
 
-The package supports weighted aggregation of models based on client importance. You can:
+### Parameters
 
-1. **Explicitly assign weights**: Provide a weight for each client when adding them:
-   ```python
-   fl_client.add_train_client(name="silo1", url="url", email="email", password="pwd", weight=0.6)
-   fl_client.add_train_client(name="silo2", url="url", email="email", password="pwd", weight=0.4)
-   ```
+Data Parameters (dataParams)
 
-2. **Mixed weighting**: Assign weights to some clients and let others be calculated automatically:
-   ```python
-   fl_client.add_train_client(name="silo1", url="url", email="email", password="pwd", weight=0.6)
-   fl_client.add_train_client(name="silo2", url="url", email="email", password="pwd") # Weight will be calculated
-   ```
+Name | Type | Default | Description | Example
+---|---|---|---|---
+target | str | required | Target column name | "cid"
+ignored_columns | list[str] | [] | Columns excluded from features | ["cid","id"]
 
-3. **Equal weighting**: Don't specify any weights, and all clients will receive equal weight.
+Top-level Model Parameters (modelParams)
 
-## API Reference
+Name | Type | Default | Description | Example
+---|---|---|---|---
+model | bytes or None | None | Serialized seed model (None for cold start) | None
+model_type | str | "rf" | "rf" or "xgb" | "xgb"
+n_base_estimators | int | required | Base number of trees | 200
+n_incremental_estimators | int | 0 | Extra trees for warm-start | 50
+train_size | float | 0.8 | Train split ratio on each site | 0.7
+test_size | float | 0.2 | Eval split ratio (use 1.0 for eval silos) | 1.0
+fl_epochs | int | 1 | Global rounds | 1
+allow_analysis | bool | False | Gate SHAP/PFI analysis (and server policy) | True
+analysis | dict | {} | Fine-grained analysis config (see below) | {"enabled":True,...}
+model_params | dict | {} | Model-specific hyperparameters (nested) | {"max_depth":6,...}
 
-### FLServer
 
-The `FLServer` class represents a data provider in the federated learning system.
+RandomForest Hyperparameters (modelParams)
+
+Name | Type | Default | Description | Example
+---|---|---|---|---
+criterion | str | "gini" | Split criterion | "entropy"
+max_depth | int or None | None | Max tree depth | 12
+min_samples_split | int | 2 | Min samples to split | 2
+min_samples_leaf | int | 1 | Min samples per leaf | 1
+max_features | str or int | "sqrt" | Features per split | "sqrt"
+bootstrap | bool | True | Bootstrap samples | True
+n_jobs | int or None | None | Threads | -1
+… | … | … | Additional sklearn RF kwargs supported | …
+
+XGBoost Hyperparameters (modelParams)
+
+Name | Type | Default | Description | Example
+---|---|---|---|---
+device | str | "cpu" | "cpu" or "cuda" | "cuda"
+verbosity | int | 1 | 0–3 | 1
+validate_parameters | bool | True | Validate input params | True
+disable_default_eval_metric | bool | False | Disable default metric | False
+learning_rate | float | 0.1 | Eta | 0.05
+max_depth | int | 6 | Max depth | 8
+min_child_weight | float | 1 | Min child weight | 1
+gamma | float | 0 | Min split loss | 0
+subsample | float | 1.0 | Row subsampling | 0.8
+colsample_bytree | float | 1.0 | Col subsampling per tree | 0.8
+colsample_bylevel | float | 1.0 | Col subsampling per level | 1.0
+colsample_bynode | float | 1.0 | Col subsampling per node | 1.0
+reg_lambda | float | 1.0 | L2 regularization | 1.0
+reg_alpha | float | 0.0 | L1 regularization | 0.0
+tree_method | str | "auto" | "hist","approx","exact","auto" | "hist"
+max_delta_step | float | 0 | Max delta step | 0
+scale_pos_weight | float | 1.0 | Class imbalance control | 1.0
+booster | str | "gbtree" | Booster type | "gbtree"
+grow_policy | str | "depthwise" | "depthwise" or "lossguide" | "depthwise"
+max_leaves | int | 0 | Max leaves | 0
+max_bin | int | 256 | Histogram bins | 256
+sampling_method | str | "uniform" | "uniform" or "gradient_based" | "uniform"
+Optional | various | N/A | `updater`, `refresh_leaf`, `process_type`, `num_parallel_tree`, `monotone_constraints`, `interaction_constraints`, `multi_strategy` | see XGB docs
+
+### RandomForest example
 
 ```python
-FLServer(
-    name: str,
-    port: int,
-    data_path: str,
-    auto_accept: bool = False
-)
-```
+from package_pysyft.client import FLClient
+rf_client = FLClient()
 
-**Parameters:**
-- `name`: Unique identifier for the server
-- `port`: Port to host the server on
-- `data_path`: Path to the CSV file with training data
-- `auto_accept`: If True, automatically accepts federated learning requests
+# connect clients (see Quickstart)
+# ...
 
-**Methods:**
-- `start()`: Start the server
-- `list_pending_requests()`: List all pending federated learning requests
-- `inspect_request(request_id)`: View details of a specific request
-- `approve_request(request_id)`: Approve a federated learning request
-- `reject_request(request_id)`: Reject a federated learning request
-
-### FLClient
-
-The `FLClient` class coordinates the federated learning process across multiple data providers.
-
-```python
-FLClient()
-```
-
-**Methods:**
-- `add_train_client(name, url, email, password, weight=None)`: Add a training data source with optional weight
-- `add_eval_client(name, url, email, password)`: Add an evaluation data source
-- `set_data_params(params)`: Configure data parameters
-- `set_model_params(params)`: Configure model parameters
-- `send_request()`: Send federated learning requests to all data sources
-- `check_status_last_code_requests()`: Check status of all pending requests
-- `run_model()`: Train the federated model
-- `get_model_params()`: Get the parameters of the trained model
-- `run_evaluate()`: Evaluate the model on the evaluation data source and return results
-
-**Data Parameters:**
-- `target`: Target variable column name
-- `ignored_columns`: List of column names to exclude from training
-
-**Model Parameters:**
-- `model`: Pre-trained model (None to create new)
-- `n_base_estimators`: Number of base estimators for the Random Forest
-- `n_incremental_estimators`: Number of new estimators to add per epoch
-- `train_size`: Fraction of data to use for training
-- `test_size`: Fraction of data to use for testing
-- `sample_size`: Number of samples to use (None for all)
-- `fl_epochs`: Number of federated learning epochs
-
-## Data Format
-
-The library expects data in CSV format with the following requirements:
-- All servers should have compatible data schemas (same column names and types)
-- The target variable should be present in all data files
-- Categorical variables should be properly encoded before use
-
-## Understanding the Code Architecture
-
-The package is organized as follows:
-
-- `client.py`: Contains the main `FLClient` class for orchestrating federated learning
-- `server.py`: Provides the `FLServer` class for hosting data and processing requests
-- `datasets.py`: Contains utilities for data processing
-- `utils.py`: Provides helper functions for visualization and communication
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## How to cite
-
-If you use **fed_rf_mk** in your work, please cite:
-
-```bibtex
-@inproceedings{cotorobai2025federated,
-  author={Cotorobai, Alexandre and Silva, Jorge Miguel and Oliveira, José Luis},
-  booktitle={2025 IEEE 38th International Symposium on Computer-Based Medical Systems (CBMS)}, 
-  title={A Federated Random Forest Solution for Secure Distributed Machine Learning}, 
-  year={2025},
-  volume={},
-  number={},
-  pages={769-774},
-  doi={10.1109/CBMS65348.2025.00159}}
+dataParams = {"target": "cid", "ignored_columns": ["cid"]}
+modelParams = {
+  "model": None,
+  "model_type": "rf",
+  "n_base_estimators": 150,
+  "n_incremental_estimators": 30,
+  "train_size": 0.8,
+  "test_size": 0.8,
+  "fl_epochs": 1,
+  "allow_analysis": True,
+  "max_depth": 10, 
+  "max_features": "sqrt", 
+  "bootstrap": True, 
 }
+rf_client.set_data_params(dataParams)
+rf_client.set_model_params(modelParams)
+rf_client.run_model()
+print(rf_client.run_evaluate())
 ```
 
-- Zenodo release with slides: https://doi.org/10.5281/zenodo.16539345
+### XGBoost example
 
+```python
+from package_pysyft.client import FLClient
+xgb_client = FLClient()
 
-## License
+# connect clients (see Quickstart)
+# ...
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+dataParams = {"target": "cid", "ignored_columns": ["cid"]}
+modelParams = {
+    "model": None,
+    "model_type": "xgb",
+    "n_base_estimators": 200,
+    "n_incremental_estimators": 50,
+    "train_size": 0.8,
+    "test_size": 0.8,
+    "fl_epochs": 1,
+    "allow_analysis": True,
+    "device": "cpu",  # or "cuda"
+    "learning_rate": 0.1,
+    "max_depth": 8,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "tree_method": "hist",
+    "verbosity": 1,
+    "validate_parameters": True
 
-## Acknowledgements
+}
+xgb_client.set_data_params(dataParams)
+xgb_client.set_model_params(modelParams)
+xgb_client.run_model()
+print(xgb_client.run_evaluate())
+```
 
-- [PySyft](https://github.com/OpenMined/PySyft) for the secure federated learning framework
-- [scikit-learn](https://scikit-learn.org/) for the Random Forest implementation
+## Data
+- Input: CSV files per datasite with consistent schema.
+- `dataParams["target"]` must exist in all files; `ignored_columns` are dropped from features.
+- `datasites.py` uploads a single asset called "Asset" by default (first dataset/asset is used in examples).
+
+## Models & Experiments
+- RandomForest:
+  - Training: local RF per silo; aggregation merges estimators proportionally to normalized weights.
+  - Warm-start: `n_incremental_estimators` grows trees for subsequent rounds.
+- XGBoost:
+  - Training: XGB per silo; for continuation, the booster is reused and `n_estimators` is increased.
+  - Evaluation: weighted margin (logit) averaging of ensemble members; picks best-weight seed for next round.
+
+Explainability:
+- SHAP: mean absolute SHAP per feature; averaged across silos using normalized weights.
+- PFI: permutation importance on eval split; mean/std per feature; averaged across silos.
+
+## Outputs & Logging
+- Remote training returns:
+  - `"model"` (serialized), `"model_type"`, sizes, and optionally `"shap_data"`, `"pfi_data"`.
+- Client logs progress; datasites log request approvals. Arrays in SHAP/PFI are normalized to Python floats for downstream use.
+
+## Extending the Project
+- Add new model types by:
+  - Updating `remote_tasks.ml_experiment` to construct and train the model.
+  - Extending `ModelAggregator` for aggregation/ensembling semantics.
+- Add new explainability methods through handlers similar to SHAP/PFI.
+
+## Troubleshooting / FAQ
+- Evaluate fails with “Reference don’t match: dict”
+  - Ensure evaluation function is available on datasite. The client has a fallback that creates a syft function ad-hoc if missing; confirm your server auto-accepts or approve requests manually.
+- Missing packages
+  - Install with `pip install .[dev]` to get all deps (including shap/xgboost).
+- SHAP/PFI slow
+  - Reduce `analysis.shap_sample_size` or `analysis.pfi_n_repeats`, or disable via `analysis.enabled=False`.
+
+## Changelog
+- 0.2.0 (2025-09-06)
+  - Modular orchestrator/handlers/aggregation
+  - Nested `model_params` support for RF/XGB
+  - Explainability controls (SHAP/PFI) and parameters
+  - Safer datasite loading + logging, fallback eval registration
+  - Tests + CI, pre-commit hooks
+
+## Citation / License / Acknowledgements
+- License: MIT
+- Built with:
+  - [PySyft](https://github.com/OpenMined/PySyft)
+  - [scikit-learn](https://scikit-learn.org/)
+  - [XGBoost](https://xgboost.readthedocs.io/)
+  - [SHAP](https://shap.readthedocs.io/)
