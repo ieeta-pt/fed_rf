@@ -22,6 +22,9 @@ Python 3.10 or newer, then
   The file has 5 exact duplicate rows, all kept.
 * Heart, Kaggle `kamilpytlak/personal-key-indicators-of-heart-disease`, file
   `heart_2022_no_nans.csv` (246,022 rows, 40 columns), downloaded by hand into the data folder.
+  `HadAngina` is left out of the features, because angina or coronary heart disease is close
+  to a restatement of the target (a heart attack is usually a manifestation of coronary heart
+  disease). Heart keeps 38 features.
 
 Paths are set by the environment variables `CSBJ_DATA`, `RUNS`, `PREDS` and
 `CSBJ_RESULTS` (see `config.py`).

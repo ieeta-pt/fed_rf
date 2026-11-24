@@ -83,6 +83,11 @@ HP = {
 
 # Heart encoding: ordered categories in their natural order, codes 0, 1, ...
 HEART_TARGET = "HadHeartAttack"
+# HadAngina (angina or coronary heart disease) is left out: a heart attack is
+# usually a manifestation of coronary heart disease, so it is close to a
+# restatement of the target. Heart keeps 38 features.
+HEART_DROP = ("HadAngina",)
+HEART_N_FEATURES = 38
 HEART_BINARY_EXTRA = {"Sex": {"Female": 0, "Male": 1}}
 HEART_ORDERED = {
     "GeneralHealth": ["Poor", "Fair", "Good", "Very good", "Excellent"],

@@ -83,6 +83,7 @@ def write_heart_encoding(maps, kinds):
 
 def encode_heart(verbose=True):
     df = pd.read_csv(config.data_dir() / "heart_2022_no_nans.csv")
+    df = df.drop(columns=list(config.HEART_DROP))
     if verbose:
         print("Heart, distinct values of non numeric columns")
     maps, kinds = heart_maps(df, verbose)
@@ -94,7 +95,7 @@ def encode_heart(verbose=True):
     y = enc.pop(config.HEART_TARGET).to_numpy().astype(int)
     X = enc.to_numpy(dtype=np.float64)
     features = list(enc.columns)
-    assert X.shape[1] == 39, X.shape
+    assert X.shape[1] == config.HEART_N_FEATURES, X.shape
     coltypes = {c: kinds.get(c, "numeric") for c in features}
     nominal = {features.index(c): len(maps[c]) for c in config.HEART_NOMINAL}
     write_heart_encoding(maps, kinds)
@@ -114,6 +115,8 @@ def load_heart(verbose=False):
         return encode_heart(verbose=True)
     z = np.load(path, allow_pickle=False)
     features = z["features"].tolist()
+    if len(features) != config.HEART_N_FEATURES or set(features) & set(config.HEART_DROP):
+        return encode_heart(verbose=verbose)  # stale cache from an older feature set
     coltypes = dict(zip(features, z["coltypes"].tolist()))
     nominal = dict(zip(z["nominal_idx"].tolist(), z["nominal_n"].tolist()))
     return Dataset("heart", z["X"], z["y"].astype(int), features, nominal, coltypes)

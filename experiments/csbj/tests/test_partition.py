@@ -54,3 +54,12 @@ def test_dirichlet_is_skewed():
     n, n_pos = site_counts(y, site, 10)
     pi_k = n_pos / n
     assert pi_k.max() - pi_k.min() > 0.2
+
+
+@pytest.mark.skipif(not (config.data_dir() / "heart_2022_no_nans.csv").exists(),
+                    reason="Heart data not present")
+def test_heart_features_without_hadangina():
+    import data
+    ds = data.load_heart()
+    assert ds.X.shape[1] == 38 == config.HEART_N_FEATURES
+    assert "HadAngina" not in ds.features and config.HEART_TARGET not in ds.features
