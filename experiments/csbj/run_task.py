@@ -115,8 +115,11 @@ def make_ncal_sets(y_de, cal, ds_code, r, f):
 
 def compute_metrics(y, p, z, pi, score=None):
     """Metrics of one arm. ``score`` ranks the records for AUROC and AUPRC
-    (default p). Level 2 rows pass a z + b, which has the ranking of z even
-    where sigma(a z + b) rounds to 0 or 1 in floating point."""
+    (default p). Level 2 rows pass sign(a) times the input of the
+    recalibration (clipped probability for rf, log odds otherwise), which is
+    the ranking of sigma(a z + b) in exact arithmetic. It avoids ties created
+    when sigma(a z + b) rounds to 0 or 1, and differences between platforms in
+    the last bit of logit."""
     from sklearn.metrics import (average_precision_score, brier_score_loss,
                                  matthews_corrcoef, roc_auc_score)
     y = np.asarray(y).astype(int)
@@ -153,21 +156,23 @@ class Scorer:
         self.rows = []
         self.n_nonpos_a = 0
 
-    def _row(self, info, ev, n_cal, eval_pos, p, z, a=np.nan, b=np.nan, rank_by_z=False):
+    def _row(self, info, ev, n_cal, eval_pos, p, z, a=np.nan, b=np.nan, rank=None):
         y = self.y_de[eval_pos]
         row = dict(self.base)
         row.update(info)
         row.update(eval=ev, n_cal=int(n_cal), n_eval=int(eval_pos.size),
                    n_eval_pos=int(y.sum()), pi=self.pi, rec_a=a, rec_b=b)
-        score = z[eval_pos] if rank_by_z else None
+        score = None if rank is None else np.sign(a) * rank[eval_pos]
         row.update(compute_metrics(y, p[eval_pos], z[eval_pos], self.pi, score))
         self.rows.append(row)
 
-    def levels(self, info, levels, z_in, evals, e12=False, prefix="", l2=True):
+    def levels(self, info, levels, z_in, evals, e12=False, prefix="", l2=True, rank_in=None):
         """``levels`` maps arm suffix (L0, L1, L1g) to (p, z) over de.
         Level 2 is fitted on ``z_in``. Returns the level 2 probabilities over
-        de fitted on the default calibration part."""
+        de fitted on the default calibration part. ``rank_in`` is a score with
+        the order of z_in (default z_in), used to rank level 2 rows."""
         p2_default = None
+        rank_in = z_in if rank_in is None else rank_in
         for ev in evals:
             cal_pos, test_pos = self.evals[ev]
             for name, (p, z) in levels.items():
@@ -179,7 +184,7 @@ class Scorer:
             z2 = a * z_in + b
             p2 = L.sigmoid(z2)
             self._row({**info, "arm": f"{prefix}_L2"}, ev, cal_pos.size, test_pos, p2, z2, a, b,
-                      rank_by_z=True)
+                      rank=rank_in)
             if ev == "test":
                 p2_default = p2
         if e12:
@@ -189,7 +194,7 @@ class Scorer:
                 self.n_nonpos_a += int(a <= 0)
                 z2 = a * z_in + b
                 self._row({**info, "arm": f"{prefix}_L2"}, "test", n_cal, test_pos,
-                          L.sigmoid(z2), z2, a, b, rank_by_z=True)
+                          L.sigmoid(z2), z2, a, b, rank=rank_in)
         return p2_default
 
     def frame(self):
@@ -328,7 +333,7 @@ def run_central(ctx):
     probs, _, rf_leaf = fit_rf(Xtr, ytr, seed["rf"], X_de32, hp, with_oob=False)
     p = probs.mean(axis=0, dtype=np.float64)
     sc.levels({**info, "learner": "rf", "T": 100}, {"L0": (p, rf_logit(p, 100))},
-              rf_logit(p, 100), evals, prefix="central")
+              rf_logit(p, 100), evals, prefix="central", rank_in=L.clip_prob(p, 100))
     preds["rf_central_L0"] = p
     del probs
     z, xgb_leaf = fit_xgb(Xtr, ytr, seed["xgb"], X_de, hp)
@@ -388,7 +393,7 @@ def run_cell(ctx, part, K):
         p1 = L.shift_prob(p0, pi, pi_k[k])
         lv = {"L0": (p0, rf_logit(p0, 100)), "L1": (p1, rf_logit(p1, 100))}
         p2 = sc.levels({**src, "learner": "rf", "T": 100}, lv, rf_logit(p0, 100), evals,
-                       e12=e12, prefix="src")
+                       e12=e12, prefix="src", rank_in=L.clip_prob(p0, 100))
         preds.update({f"rf_src{k}_L0": p0, f"rf_src{k}_L1": p1, f"rf_src{k}_L2": p2})
         for lname, Z in (("xgb", xgb_z), ("lr", lr_z)):
             z0 = Z[k]
@@ -428,10 +433,12 @@ def run_cell(ctx, part, K):
             lv = {"L0": (p0, rf_logit(p0, T)), "L1": (p1, rf_logit(p1, T))}
             info = {**fed, "learner": "rf", "sampling": sname, "T": T, "pi_k": pi_fed}
             if default:
-                p2 = sc.levels(info, lv, rf_logit(p0, T), evals, e12=e12, prefix="fed")
+                p2 = sc.levels(info, lv, rf_logit(p0, T), evals, e12=e12, prefix="fed",
+                               rank_in=L.clip_prob(p0, T))
                 preds.update({"rf_fed_L0": p0, "rf_fed_L1": p1, "rf_fed_L2": p2})
             else:
-                sc.levels(info, lv, rf_logit(p0, T), ("test",), prefix="fed")
+                sc.levels(info, lv, rf_logit(p0, T), ("test",), prefix="fed",
+                          rank_in=L.clip_prob(p0, T))
             sc.levels(info, {"L1g": (p1g, rf_logit(p1g, T))}, None, ("test",),
                       prefix="fed", l2=False)
         z0 = L.xgb_federated(xgb_z, w)

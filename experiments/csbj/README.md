@@ -64,9 +64,17 @@ Smoke run used on the Mac (not used for the results):
   the totals of the training pool and `pi_k` is the prevalence the combined
   model was trained at (sum_k (t_k/T) pi_k for rf, sum_k w_k pi_k for xgb).
   `n_cal` is 0 for rows that use no calibration records.
-* Level 2 rows rank records by a z + b for AUROC and AUPRC. With a > 0 this
-  is the ranking of z, also where sigma(a z + b) rounds to exactly 0 or 1
-  (this happens with small calibration sets that separate the classes).
+* Level 2 rows rank records for AUROC and AUPRC by sign(a) times the input of
+  the recalibration (the clipped probability for rf, the log odds otherwise).
+  This is the ranking of sigma(a z + b) in exact arithmetic, also where
+  sigma(a z + b) rounds to exactly 0 or 1 (small calibration sets that
+  separate the classes), and it does not depend on the last bit of logit.
+* Reproducibility. A cell run twice on the same machine gives identical
+  files, also across the two Pleiades CPU nodes. Between an arm64 Mac and the
+  x86-64 nodes, XGBoost and logistic regression agree, while a few Random
+  Forest splits differ (near ties in the impurity decrease resolved
+  differently in floating point), so the Mac smoke numbers are not the
+  reference. The reported numbers come from Pleiades.
 * Every weight and sampling configuration (E5) is scored on `test`. The
   default configuration (equal weights, uniform sampling) is also scored on
   `shift_half` and `shift_double` (E10) and on the calibration subsets (E12).
