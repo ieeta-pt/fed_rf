@@ -200,29 +200,29 @@ class Scorer:
 # Models
 # ----------------------------------------------------------------------------
 
-def make_rf(seed):
+def make_rf(seed, hp="default"):
     from sklearn.ensemble import RandomForestClassifier
-    return RandomForestClassifier(random_state=seed, **config.RF_PARAMS)
+    return RandomForestClassifier(random_state=seed, **config.HP[hp]["rf"])
 
 
-def make_xgb(seed):
+def make_xgb(seed, hp="default"):
     from xgboost import XGBClassifier
-    return XGBClassifier(random_state=seed, **config.XGB_PARAMS)
+    return XGBClassifier(random_state=seed, **config.HP[hp]["xgb"])
 
 
-def fit_rf(X, y, seed, X_de32):
-    rf = make_rf(seed).fit(X, y)
+def fit_rf(X, y, seed, X_de32, hp="default", with_oob=True):
+    rf = make_rf(seed, hp).fit(X, y)
     assert rf.classes_.tolist() == [0, 1], rf.classes_
     probs = np.stack([t.predict_proba(X_de32, check_input=False)[:, 1]
                       for t in rf.estimators_]).astype(np.float32)
-    oob = L.tree_oob_scores(rf, X, y)
+    oob = L.tree_oob_scores(rf, X, y) if with_oob else np.full(len(rf.estimators_), np.nan)
     leaf = L.single_record_leaf_fraction(rf, X)
     del rf
     return probs, oob, leaf
 
 
-def fit_xgb(X, y, seed, X_de):
-    m = make_xgb(seed).fit(X, y)
+def fit_xgb(X, y, seed, X_de, hp="default"):
+    m = make_xgb(seed, hp).fit(X, y)
     assert m.classes_.tolist() == [0, 1], m.classes_
     z = np.asarray(m.predict(X_de, output_margin=True), dtype=np.float64)
     leaf = L.xgb_single_record_leaf_fraction(m, X)
@@ -238,10 +238,11 @@ def fit_lr(X, y, seed, X_de, nominal):
     return z
 
 
-def hyperparameters(nominal):
+def hyperparameters(nominal, hp="default"):
     return {
-        "rf": make_rf(0).get_params(),
-        "xgb": make_xgb(0).get_params(),
+        "hp": hp,
+        "rf": make_rf(0, hp).get_params(),
+        "xgb": make_xgb(0, hp).get_params(),
         "lr": data_mod.lr_pipeline(nominal, 0).named_steps["lr"].get_params(),
         "seed_note": "random_state is set per model with seed_for(...), see config.py",
     }
@@ -319,22 +320,23 @@ def run_central(ctx):
     X_de32 = np.ascontiguousarray(X_de, dtype=np.float32)
     seed = {lc: config.seed_for(dsc, r, f, config.CENTRAL_PART_CODE, code)
             for lc, code in config.LEARNER_CODE.items()}
+    hp, evals = ctx["hp"], ctx["eval_names"]
     sc = Scorer(base_info(ds, r, f, "central", 0), ctx["y_de"], ctx["evals"], {}, pi)
     info = {"source": -1, "weights": "na", "sampling": "na",
             "n_k": int(tr.size), "pos_k": int(ytr.sum()), "pi_k": pi}
     preds = {}
-    probs, _, rf_leaf = fit_rf(Xtr, ytr, seed["rf"], X_de32)
+    probs, _, rf_leaf = fit_rf(Xtr, ytr, seed["rf"], X_de32, hp, with_oob=False)
     p = probs.mean(axis=0, dtype=np.float64)
     sc.levels({**info, "learner": "rf", "T": 100}, {"L0": (p, rf_logit(p, 100))},
-              rf_logit(p, 100), EVALS, prefix="central")
+              rf_logit(p, 100), evals, prefix="central")
     preds["rf_central_L0"] = p
     del probs
-    z, xgb_leaf = fit_xgb(Xtr, ytr, seed["xgb"], X_de)
-    sc.levels({**info, "learner": "xgb", "T": 100}, {"L0": (L.sigmoid(z), z)}, z, EVALS,
+    z, xgb_leaf = fit_xgb(Xtr, ytr, seed["xgb"], X_de, hp)
+    sc.levels({**info, "learner": "xgb", "T": 100}, {"L0": (L.sigmoid(z), z)}, z, evals,
               prefix="central")
     preds["xgb_central_L0"] = L.sigmoid(z)
     z = fit_lr(Xtr, ytr, seed["lr"], X_de, ctx["nominal"])
-    sc.levels({**info, "learner": "lr", "T": 0}, {"L0": (L.sigmoid(z), z)}, z, EVALS,
+    sc.levels({**info, "learner": "lr", "T": 0}, {"L0": (L.sigmoid(z), z)}, z, evals,
               prefix="central")
     preds["lr_central_L0"] = L.sigmoid(z)
     sites = pd.DataFrame([{
@@ -356,6 +358,8 @@ def run_cell(ctx, part, K):
     pi_k = pos_k / n_k
     X_de = X[de]
     X_de32 = np.ascontiguousarray(X_de, dtype=np.float32)
+    hp, evals, main_only = ctx["hp"], ctx["eval_names"], ctx["main_only"]
+    e12 = not main_only
 
     rf_probs, rf_oob, rf_leaf, xgb_z, xgb_leaf, lr_z = [], [], [], [], [], []
     for k in range(K):
@@ -363,11 +367,11 @@ def run_cell(ctx, part, K):
         Xk, yk = X[rows], y[rows]
         seeds = {lc: config.seed_for(dsc, r, f, pcode, K, k, code)
                  for lc, code in config.LEARNER_CODE.items()}
-        probs, oob, leaf = fit_rf(Xk, yk, seeds["rf"], X_de32)
+        probs, oob, leaf = fit_rf(Xk, yk, seeds["rf"], X_de32, hp, with_oob=not main_only)
         rf_probs.append(probs)
         rf_oob.append(oob)
         rf_leaf.append(leaf)
-        z, leaf = fit_xgb(Xk, yk, seeds["xgb"], X_de)
+        z, leaf = fit_xgb(Xk, yk, seeds["xgb"], X_de, hp)
         xgb_z.append(z)
         xgb_leaf.append(leaf)
         lr_z.append(fit_lr(Xk, yk, seeds["lr"], X_de, ctx["nominal"]))
@@ -383,26 +387,30 @@ def run_cell(ctx, part, K):
         p0 = rf_probs[k].mean(axis=0, dtype=np.float64)
         p1 = L.shift_prob(p0, pi, pi_k[k])
         lv = {"L0": (p0, rf_logit(p0, 100)), "L1": (p1, rf_logit(p1, 100))}
-        p2 = sc.levels({**src, "learner": "rf", "T": 100}, lv, rf_logit(p0, 100), EVALS,
-                       e12=True, prefix="src")
+        p2 = sc.levels({**src, "learner": "rf", "T": 100}, lv, rf_logit(p0, 100), evals,
+                       e12=e12, prefix="src")
         preds.update({f"rf_src{k}_L0": p0, f"rf_src{k}_L1": p1, f"rf_src{k}_L2": p2})
         for lname, Z in (("xgb", xgb_z), ("lr", lr_z)):
             z0 = Z[k]
             z1 = L.shift_logit(z0, pi, pi_k[k])
             lv = {"L0": (L.sigmoid(z0), z0), "L1": (L.sigmoid(z1), z1)}
             p2 = sc.levels({**src, "learner": lname, "T": 100 if lname == "xgb" else 0},
-                           lv, z0, EVALS, e12=True, prefix="src")
+                           lv, z0, evals, e12=e12, prefix="src")
             preds.update({f"{lname}_src{k}_L0": L.sigmoid(z0),
                           f"{lname}_src{k}_L1": L.sigmoid(z1), f"{lname}_src{k}_L2": p2})
 
     # federated arms
     site_extra = {}
-    for wname, wcode in config.WEIGHT_CODE.items():
+    weight_kinds = [config.DEFAULT_WEIGHTS] if main_only else list(config.WEIGHT_CODE)
+    sampling_kinds = [config.DEFAULT_SAMPLING] if main_only else list(config.SAMPLING_CODE)
+    for wname in weight_kinds:
+        wcode = config.WEIGHT_CODE[wname]
         w = L.site_weights(n_k, pos_k, wname)
         t = L.allocate_trees(w, np.full(K, 100))
         site_extra[f"t_{wname}"] = t
         fed = {"source": -1, "weights": wname, "n_k": int(n_k.sum()), "pos_k": int(pos_k.sum())}
-        for sname, scode in config.SAMPLING_CODE.items():
+        for sname in sampling_kinds:
+            scode = config.SAMPLING_CODE[sname]
             rng = np.random.default_rng([dsc, r, f, pcode, K, config.TREE_SELECT_TAG, wcode, scode])
             sel, fb = [], []
             for k in range(K):
@@ -420,7 +428,7 @@ def run_cell(ctx, part, K):
             lv = {"L0": (p0, rf_logit(p0, T)), "L1": (p1, rf_logit(p1, T))}
             info = {**fed, "learner": "rf", "sampling": sname, "T": T, "pi_k": pi_fed}
             if default:
-                p2 = sc.levels(info, lv, rf_logit(p0, T), EVALS, e12=True, prefix="fed")
+                p2 = sc.levels(info, lv, rf_logit(p0, T), evals, e12=e12, prefix="fed")
                 preds.update({"rf_fed_L0": p0, "rf_fed_L1": p1, "rf_fed_L2": p2})
             else:
                 sc.levels(info, lv, rf_logit(p0, T), ("test",), prefix="fed")
@@ -433,7 +441,7 @@ def run_cell(ctx, part, K):
                 "pi_k": float(np.sum(w * pi_k))}
         lv = {"L0": (L.sigmoid(z0), z0), "L1": (L.sigmoid(z1), z1)}
         if wname == config.DEFAULT_WEIGHTS:
-            p2 = sc.levels(info, lv, z0, EVALS, e12=True, prefix="fed")
+            p2 = sc.levels(info, lv, z0, evals, e12=e12, prefix="fed")
             preds.update({"xgb_fed_L0": L.sigmoid(z0), "xgb_fed_L1": L.sigmoid(z1), "xgb_fed_L2": p2})
         else:
             sc.levels(info, lv, z0, ("test",), prefix="fed")
@@ -525,7 +533,7 @@ def stratified_subsample(y, n, seed=0):
     return np.sort(idx)
 
 
-def build_context(ds_name, r, f, subsample=None, X=None, y=None, nominal=None):
+def build_context(ds_name, r, f, subsample=None, X=None, y=None, nominal=None, hp="default"):
     if X is None:
         ds = data_mod.load(ds_name)
         X, y, nominal = ds.X, ds.y, ds.nominal
@@ -541,23 +549,30 @@ def build_context(ds_name, r, f, subsample=None, X=None, y=None, nominal=None):
         "pi": float(y[tr].mean()),
         "evals": make_evals(y_de, cal, test, dsc, r, f),
         "ncal_sets": make_ncal_sets(y_de, cal, dsc, r, f),
+        "hp": hp, "main_only": hp != "default",
+        "eval_names": EVALS if hp == "default" else ("test",),
     }
 
 
 def run_task(ds_name, r, f, K_list=config.K_LIST, partitions=tuple(config.PARTITIONS),
              subsample=None, force=False, n_jobs=None, runs=None, preds=None,
-             X=None, y=None, nominal=None, write_hyper=True):
+             X=None, y=None, nominal=None, write_hyper=True, hp="default"):
+    """Run one task. With ``hp`` other than "default" only the main arms are
+    scored (equal weights, uniform sampling, eval test, full calibration part)
+    and no per row predictions are written."""
+    if hp not in config.HP:
+        raise ValueError(f"unknown hp configuration {hp!r}")
     from joblib import Parallel, delayed
     t_task = time.perf_counter()
-    runs = Path(runs) if runs else config.runs_dir()
+    runs = Path(runs) if runs else config.runs_dir(hp)
     preds_root = Path(preds) if preds else config.preds_dir()
     out_dir = runs / ds_name / f"r{r}_f{f}"
     out_dir.mkdir(parents=True, exist_ok=True)
     pred_dir = None
-    if r == 0 and f == 0:
+    if r == 0 and f == 0 and hp == "default":
         pred_dir = preds_root / ds_name / "r0_f0"
         pred_dir.mkdir(parents=True, exist_ok=True)
-    ctx = build_context(ds_name, r, f, subsample, X, y, nominal)
+    ctx = build_context(ds_name, r, f, subsample, X, y, nominal, hp)
     ctx["out_dir"], ctx["pred_dir"] = out_dir, pred_dir
     if n_jobs is None:
         n_jobs = int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
@@ -567,9 +582,10 @@ def run_task(ds_name, r, f, K_list=config.K_LIST, partitions=tuple(config.PARTIT
     meta.setdefault("cells", {})
 
     if write_hyper:
-        hp_path = config.results_dir() / "hyperparameters.json"
+        name = "hyperparameters.json" if hp == "default" else f"hyperparameters_{hp}.json"
+        hp_path = config.results_dir() / name
         hp_path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(hyperparameters(ctx["nominal"]), hp_path)
+        write_json(hyperparameters(ctx["nominal"], hp), hp_path)
 
     status = []
     c_path = out_dir / "central.parquet"
@@ -610,7 +626,9 @@ def run_task(ds_name, r, f, K_list=config.K_LIST, partitions=tuple(config.PARTIT
         status.append(res["status"])
 
     meta.update({
-        "dataset": ds_name, "rep": r, "fold": f, "versions": versions(),
+        "dataset": ds_name, "rep": r, "fold": f, "hp": hp,
+        "hyperparameters": {k: dict(v) for k, v in config.HP[hp].items()},
+        "main_only": ctx["main_only"], "versions": versions(),
         "platform": {"platform": platform.platform(), "machine": platform.machine(),
                      "processor": platform.processor(), "host": socket.gethostname(),
                      "cpu_count": os.cpu_count(), "n_jobs": n_jobs,
@@ -652,6 +670,8 @@ def main(argv=None):
     ap.add_argument("--subsample", type=int, default=None, help="smoke runs only")
     ap.add_argument("--n-jobs", type=int, default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--hp", default="default", choices=list(config.HP),
+                    help="regularized: sensitivity run, main arms only, separate run folder")
     a = ap.parse_args(argv)
     if a.task_id is not None:
         r, f = divmod(a.task_id, config.N_FOLDS)
@@ -667,7 +687,8 @@ def main(argv=None):
     for p in a.partitions:
         if p not in config.PARTITIONS:
             ap.error(f"unknown partition {p}")
-    res = run_task(a.dataset, r, f, tuple(a.K), tuple(a.partitions), a.subsample, a.force, a.n_jobs)
+    res = run_task(a.dataset, r, f, tuple(a.K), tuple(a.partitions), a.subsample, a.force,
+                   a.n_jobs, hp=a.hp)
     cells = res["meta"]["cells"]
     for name, c in sorted(cells.items()):
         extra = f" {c.get('time_s', 0):.1f}s {c.get('peak_mb', 0):.0f}MB" if c.get("status") == "done" else ""

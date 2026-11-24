@@ -145,3 +145,25 @@ def test_skip_existing(task):
     res = RT.run_task("synthetic", 0, 0, K_list=(2, 3), n_jobs=1, runs=root / "runs",
                       preds=root / "preds", X=X, y=y, nominal={}, write_hyper=False)
     assert all(s == "skipped" for s in res["status"]), res["status"]
+
+
+def test_regularized_main_arms_only(tmp_path):
+    X, y = _data()
+    res = RT.run_task("synthetic", 0, 0, K_list=(2,), n_jobs=1, runs=tmp_path / "runs",
+                      preds=tmp_path / "preds", X=X, y=y, nominal={}, write_hyper=False,
+                      hp="regularized")
+    assert res["n_error"] == 0
+    assert res["meta"]["hyperparameters"]["rf"]["min_samples_leaf"] == 5
+    assert res["meta"]["hyperparameters"]["xgb"]["learning_rate"] == 0.1
+    assert not (tmp_path / "preds" / "synthetic").exists()
+    d = tmp_path / "runs" / "synthetic" / "r0_f0"
+    c = pd.read_parquet(d / "equal_K2.parquet")
+    central = pd.read_parquet(d / "central.parquet")
+    assert set(c["eval"]) == {"test"} and set(central["eval"]) == {"test"}
+    assert set(c.weights) == {"na", "equal"} and set(c.sampling) <= {"na", "uniform"}
+    assert set(c.arm) == {"src_L0", "src_L1", "src_L2", "fed_L0", "fed_L1", "fed_L1g", "fed_L2"}
+    l2 = c[c.arm.str.endswith("L2")]
+    assert l2.n_cal.nunique() == 1  # full calibration part only
+    assert not c[METRICS].isna().any().any()
+    sites = pd.read_parquet(d / "equal_K2_sites.parquet")
+    assert np.all(sites.xgb_leaf_frac == 0)  # min_child_weight=1 and hessian <= 0.25

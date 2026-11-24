@@ -25,8 +25,11 @@ def data_dir():
     return _path("CSBJ_DATA", "data")
 
 
-def runs_dir():
-    return _path("RUNS", "runs")
+def runs_dir(hp="default"):
+    """Run files. The regularized configuration lives in a separate folder."""
+    if hp == "default":
+        return _path("RUNS", "runs")
+    return _path(f"RUNS_{hp.upper()}", f"runs_{hp}")
 
 
 def preds_dir():
@@ -68,6 +71,15 @@ RF_PARAMS = dict(n_estimators=100, n_jobs=1)
 XGB_PARAMS = dict(n_estimators=100, max_depth=6, learning_rate=0.3,
                   tree_method="hist", n_jobs=1)
 LR_PARAMS = dict(max_iter=5000)
+
+# Hyperparameter configurations. "default" is the main grid. "regularized" is a
+# sensitivity analysis (RF min_samples_leaf=5, XGBoost learning_rate=0.1, the
+# rest unchanged), run with the main arms only.
+HP = {
+    "default": {"rf": dict(RF_PARAMS), "xgb": dict(XGB_PARAMS)},
+    "regularized": {"rf": dict(RF_PARAMS, min_samples_leaf=5),
+                    "xgb": dict(XGB_PARAMS, learning_rate=0.1)},
+}
 
 # Heart encoding: ordered categories in their natural order, codes 0, 1, ...
 HEART_TARGET = "HadHeartAttack"
