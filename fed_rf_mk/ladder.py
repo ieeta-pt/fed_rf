@@ -230,6 +230,13 @@ def _selected_site_means(tree_probs, selections):
     return means, np.asarray(counts, dtype=np.int64)
 
 
+def _unit(p):
+    """Clip to [0, 1]. The weights t_k / T can sum to 1 + 2**-52 in floating
+    point (t = (2, 4, 3, 1)), which would push a probability of 1 above 1.
+    Values already in [0, 1] are unchanged."""
+    return np.clip(p, 0.0, 1.0)
+
+
 def rf_federated(tree_probs, selections):
     """Mean of P(y=1) over every selected tree of every site.
 
@@ -243,7 +250,7 @@ def rf_federated(tree_probs, selections):
     for m, c in zip(means, counts):
         if c:
             out += (c / T) * m
-    return out
+    return _unit(out)
 
 
 def rf_federated_shift(tree_probs, selections, pi, pi_k):
@@ -263,7 +270,7 @@ def rf_federated_shift(tree_probs, selections, pi, pi_k):
         if c:
             term = (c / T) * shift_prob(m, pi, pi_k[k])
             out = term if out is None else out + term
-    return out
+    return _unit(out)
 
 
 def rf_federated_global_shift(tree_probs, selections, pi, pi_k):

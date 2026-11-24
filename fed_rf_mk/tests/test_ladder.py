@@ -270,3 +270,19 @@ def test_leaf_fraction_lt5(forest_data):
                                  n_jobs=1).fit(X, y)
     r = L.single_record_leaf_fraction(reg, X)
     assert r["n_single"] == 0 and r["n_lt5"] == 0  # min_samples_leaf counts distinct rows
+
+
+def test_rf_federated_stays_in_unit_interval():
+    # (2 + 4 + 3 + 1) / 10 summed term by term in floating point is 1 + 2**-52
+    t = (2, 4, 3, 1)
+    probs = [np.ones((c, 3)) for c in t]
+    sel = [np.arange(c) for c in t]
+    pi_k = [0.2, 0.3, 0.4, 0.5]
+    acc = 0.0
+    for c in t:
+        acc += c / 10
+    assert acc > 1.0
+    for p in (L.rf_federated(probs, sel), L.rf_federated_shift(probs, sel, 0.3, pi_k),
+              L.rf_federated_global_shift(probs, sel, 0.3, pi_k)):
+        assert np.all(p <= 1.0) and np.all(p >= 0.0)
+        assert np.all(p == 1.0)
