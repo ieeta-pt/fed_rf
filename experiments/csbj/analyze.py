@@ -1,6 +1,11 @@
 """Analysis of the run files.
 
     python experiments/csbj/analyze.py summary [--runs DIR] [--runs-reg DIR]
+    python experiments/csbj/analyze.py compare-hp [--partitions equal dir0.5 dir0.1]
+    python experiments/csbj/analyze.py report [--datasets aids diabetic heart] [--r-rep 10]
+                                              [--r-rep-reg 4] [--out DIR]
+
+``report`` writes the tables, numbers.json and numbers.md (see tables.py).
 
 Levels per dataset, learner, partition, K and draw (default configuration:
 equal weights, uniform sampling, eval test, full calibration part)
@@ -181,6 +186,7 @@ def shares(per_draw, metric_name):
                 dataset=ds, learner=lr, partition=part, metric=metric_name, level=l,
                 r=r["r"], r_lo=r["lo"], r_hi=r["hi"],
                 reportable=_excludes_zero(ci_den),
+                den_lo=ci_den["lo"], den_hi=ci_den["hi"],
                 r_vs_plain=rp["r"], r_vs_plain_lo=rp["lo"], r_vs_plain_hi=rp["hi"],
                 reportable_vs_plain=_excludes_zero(ci_plain),
                 num=float(num.mean()), den=float(den.mean()), den_plain=float(den_plain.mean()),
@@ -336,12 +342,23 @@ def print_summary(runs, partitions=("dir0.5",)):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["summary", "compare-hp"])
+    ap.add_argument("command", choices=["summary", "compare-hp", "report"])
     ap.add_argument("--runs", default=str(config.runs_dir()))
     ap.add_argument("--runs-reg", default=str(config.runs_dir("regularized")))
     ap.add_argument("--partitions", nargs="+", default=["dir0.5"])
+    ap.add_argument("--datasets", nargs="+", default=list(config.DATASETS))
+    ap.add_argument("--r-rep", type=int, default=10)
+    ap.add_argument("--r-rep-reg", type=int, default=4)
+    ap.add_argument("--preds", default=str(config.preds_dir()))
+    ap.add_argument("--out", default=str(config.results_dir()))
+    ap.add_argument("--allow-incomplete", action="store_true")
     a = ap.parse_args(argv)
-    if a.command == "summary":
+    if a.command == "report":
+        import tables
+        n = tables.build(a.runs, a.runs_reg, a.preds, a.out, tuple(a.datasets), a.r_rep,
+                         a.r_rep_reg, a.allow_incomplete)
+        print(f"{len(n.items)} keys written to {a.out}")
+    elif a.command == "summary":
         print_summary(a.runs, tuple(a.partitions))
     else:
         k, leaves, trade, draws = compare_hp(a.runs, a.runs_reg, a.partitions)
