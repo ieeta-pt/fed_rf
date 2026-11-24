@@ -1,0 +1,8 @@
+data/
+runs/
+runs_local/
+preds/
+results/
+__pycache__/
+*.pyc
+.pytest_cache/
