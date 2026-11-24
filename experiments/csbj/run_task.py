@@ -347,8 +347,10 @@ def run_central(ctx):
     sites = pd.DataFrame([{
         "dataset": ds, "rep": r, "fold": f, "n": int(tr.size), "n_pos": int(ytr.sum()),
         "rf_leaf_single": rf_leaf["n_single"], "rf_leaf_n": rf_leaf["n_leaves"],
-        "rf_leaf_frac": rf_leaf["fraction"], "xgb_leaf_single": xgb_leaf["n_single"],
+        "rf_leaf_frac": rf_leaf["fraction"], "rf_leaf_lt5": rf_leaf["n_lt5"],
+        "rf_leaf_frac_lt5": rf_leaf["fraction_lt5"], "xgb_leaf_single": xgb_leaf["n_single"],
         "xgb_leaf_n": xgb_leaf["n_leaves"], "xgb_leaf_frac": xgb_leaf["fraction"],
+        "xgb_leaf_lt5": xgb_leaf["n_lt5"], "xgb_leaf_frac_lt5": xgb_leaf["fraction_lt5"],
     }])
     return sc, sites, preds, seed
 
@@ -461,9 +463,13 @@ def run_cell(ctx, part, K):
         "rf_leaf_single": [d["n_single"] for d in rf_leaf],
         "rf_leaf_n": [d["n_leaves"] for d in rf_leaf],
         "rf_leaf_frac": [d["fraction"] for d in rf_leaf],
+        "rf_leaf_lt5": [d["n_lt5"] for d in rf_leaf],
+        "rf_leaf_frac_lt5": [d["fraction_lt5"] for d in rf_leaf],
         "xgb_leaf_single": [d["n_single"] for d in xgb_leaf],
         "xgb_leaf_n": [d["n_leaves"] for d in xgb_leaf],
         "xgb_leaf_frac": [d["fraction"] for d in xgb_leaf],
+        "xgb_leaf_lt5": [d["n_lt5"] for d in xgb_leaf],
+        "xgb_leaf_frac_lt5": [d["fraction_lt5"] for d in xgb_leaf],
         "rf_oob_mean": [float(np.nanmean(o)) if np.isfinite(o).any() else np.nan for o in rf_oob],
         "rf_oob_nan": [int(np.isnan(o).sum()) for o in rf_oob],
         **site_extra,

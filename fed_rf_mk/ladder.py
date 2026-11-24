@@ -330,42 +330,50 @@ def tree_oob_scores(rf, X, y):
     return scores
 
 
-def _leaf_counts(leaves):
+SMALL_LEAF = 5  # leaves with fewer distinct training rows than this are "small"
+
+
+def _leaf_counts(leaves, small=SMALL_LEAF):
+    """(leaves with one distinct row, leaves with fewer than ``small`` distinct
+    rows, number of leaves), for the leaf index of every distinct row."""
     _, counts = np.unique(leaves, return_counts=True)
-    return int(np.count_nonzero(counts == 1)), int(counts.size)
+    return (int(np.count_nonzero(counts == 1)), int(np.count_nonzero(counts < small)),
+            int(counts.size))
+
+
+def _leaf_summary(n_single, n_small, n_leaves):
+    nan = float("nan")
+    return {"fraction": n_single / n_leaves if n_leaves else nan,
+            "fraction_lt5": n_small / n_leaves if n_leaves else nan,
+            "n_single": n_single, "n_lt5": n_small, "n_leaves": n_leaves}
 
 
 def single_record_leaf_fraction(rf, X):
-    """Fraction of leaves reached by exactly one distinct training row.
+    """Fraction of leaves reached by exactly one distinct training row, and by
+    fewer than 5 distinct training rows.
 
     Each tree is applied to its own bootstrap rows (distinct rows only).
-    Returns dict(fraction, n_single, n_leaves) summed over trees.
+    Returns dict(fraction, fraction_lt5, n_single, n_lt5, n_leaves) summed over trees.
     """
     X = np.asarray(X)
-    n_single = n_leaves = 0
+    tot = np.zeros(3, dtype=np.int64)
     for tree, samples in zip(rf.estimators_, rf.estimators_samples_):
         rows = np.unique(samples)
-        s, l = _leaf_counts(tree.apply(X[rows].astype(np.float32)))
-        n_single += s
-        n_leaves += l
-    return {"fraction": n_single / n_leaves if n_leaves else float("nan"),
-            "n_single": n_single, "n_leaves": n_leaves}
+        tot += _leaf_counts(tree.apply(X[rows].astype(np.float32)))
+    return _leaf_summary(*(int(v) for v in tot))
 
 
 def xgb_single_record_leaf_fraction(model, X):
-    """Same statistic for XGBoost, with ``pred_leaf=True`` on the training rows.
+    """Same statistics for XGBoost, with ``pred_leaf=True`` on the training rows.
     Leaves are those reached by at least one training row."""
     import xgboost as xgb
     booster = model.get_booster() if hasattr(model, "get_booster") else model
     leaves = booster.predict(xgb.DMatrix(np.asarray(X)), pred_leaf=True)
     leaves = np.asarray(leaves).reshape(np.asarray(X).shape[0], -1)
-    n_single = n_leaves = 0
+    tot = np.zeros(3, dtype=np.int64)
     for j in range(leaves.shape[1]):
-        s, l = _leaf_counts(leaves[:, j])
-        n_single += s
-        n_leaves += l
-    return {"fraction": n_single / n_leaves if n_leaves else float("nan"),
-            "n_single": n_single, "n_leaves": n_leaves}
+        tot += _leaf_counts(leaves[:, j])
+    return _leaf_summary(*(int(v) for v in tot))
 
 
 # ----------------------------------------------------------------------------

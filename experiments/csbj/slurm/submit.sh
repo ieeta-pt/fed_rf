@@ -28,8 +28,8 @@ LAST_ID=$((5 * R_REP - 1))
 prev="$AFTER"
 for DS in aids diabetic heart; do
   case "$DS" in
-    heart) RES="--cpus-per-task=9 --mem=16G --time=01:00:00" ;;
-    *)     RES="--cpus-per-task=9 --mem=8G --time=00:30:00" ;;
+    heart) RES="--cpus-per-task=9 --mem=16G --time=00:30:00" ;;
+    *)     RES="--cpus-per-task=9 --mem=4G --time=00:15:00" ;;
   esac
   if [ "$TIMING" = 1 ]; then ARRAY="0"; else ARRAY="0-${LAST_ID}%1"; fi
   DEP=""

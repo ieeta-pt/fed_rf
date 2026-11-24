@@ -192,18 +192,27 @@ def shares(per_draw, metric_name):
 # Comparison of two hyperparameter configurations
 # ----------------------------------------------------------------------------
 
+def _leaf_rows(g, **keys):
+    rows = []
+    for lr in ("rf", "xgb"):
+        n = g[f"{lr}_leaf_n"].sum()
+        lt5 = g[f"{lr}_leaf_lt5"].sum() if f"{lr}_leaf_lt5" in g else np.nan
+        rows.append(dict(keys, learner=lr, leaf_single=g[f"{lr}_leaf_single"].sum() / n,
+                         leaf_lt5=lt5 / n))
+    return rows
+
+
 def leaf_summary(sites, central_sites):
+    """Fractions of leaves with one distinct training row and with fewer than 5,
+    pooled over trees, sites, cells and draws, for site models per partition
+    and for the centralized model."""
     rows = []
     if len(sites):
         for (ds, part), g in sites.groupby(["dataset", "partition"]):
-            rows.append(dict(dataset=ds, partition=part, model="site",
-                             rf=g.rf_leaf_single.sum() / g.rf_leaf_n.sum(),
-                             xgb=g.xgb_leaf_single.sum() / g.xgb_leaf_n.sum()))
+            rows += _leaf_rows(g, dataset=ds, partition=part, model="site")
     if len(central_sites):
         for ds, g in central_sites.groupby("dataset"):
-            rows.append(dict(dataset=ds, partition="central", model="central",
-                             rf=g.rf_leaf_single.sum() / g.rf_leaf_n.sum(),
-                             xgb=g.xgb_leaf_single.sum() / g.xgb_leaf_n.sum()))
+            rows += _leaf_rows(g, dataset=ds, partition="central", model="central")
     return pd.DataFrame(rows)
 
 
@@ -232,15 +241,71 @@ def key_quantities(metrics, partitions=None):
     return res
 
 
+def _restrict(frame, draws):
+    if not len(frame):
+        return frame
+    return frame.merge(draws, on=["dataset"] + DRAW)
+
+
+def common_draws(*frames):
+    """(dataset, rep, fold) present in every metric frame."""
+    keys = None
+    for f in frames:
+        k = f[["dataset"] + DRAW].drop_duplicates()
+        keys = k if keys is None else keys.merge(k)
+    return keys
+
+
 def compare_hp(runs_default, runs_reg, partitions=None):
-    """Side by side key quantities and leaf fractions of the two configurations."""
+    """Key quantities and leaf fractions of the two configurations, on the
+    draws present in both (the regularized grid uses the same seeds on fewer
+    repetitions)."""
     md, sd, cd = load_runs(runs_default)
     mr, sr, cr = load_runs(runs_reg)
+    draws = common_draws(md, mr)
+    md, sd, cd = (_restrict(x, draws) for x in (md, sd, cd))
+    mr, sr, cr = (_restrict(x, draws) for x in (mr, sr, cr))
     kd = key_quantities(md, partitions).assign(hp="default")
     kr = key_quantities(mr, partitions).assign(hp="regularized")
     ld = leaf_summary(sd, cd).assign(hp="default")
     lr = leaf_summary(sr, cr).assign(hp="regularized")
-    return pd.concat([kd, kr], ignore_index=True), pd.concat([ld, lr], ignore_index=True)
+    k = pd.concat([kd, kr], ignore_index=True)
+    leaves = pd.concat([ld, lr], ignore_index=True)
+    return k, leaves, tradeoff_table(k, leaves), draws
+
+
+def tradeoff_table(k, leaves):
+    """Privacy against performance, default and regularized side by side.
+
+    One row per dataset, learner, partition and model: the source model
+    (level 0) and the federated model (level 3) are built from the site models
+    and share their leaf fractions, the centralized model has its own."""
+    rows = []
+    for _, q in k[k.learner.isin(["rf", "xgb"])].iterrows():
+        site = leaves[(leaves.dataset == q.dataset) & (leaves.learner == q.learner)
+                      & (leaves.partition == q.partition) & (leaves.hp == q.hp)]
+        cen = leaves[(leaves.dataset == q.dataset) & (leaves.learner == q.learner)
+                     & (leaves.model == "central") & (leaves.hp == q.hp)]
+        for model, lv, lf in (("source L0", "m0", site), ("federated L3", "m30", site),
+                              ("central", "mc", cen)):
+            rows.append(dict(dataset=q.dataset, learner=q.learner, partition=q.partition,
+                             model=model, hp=q.hp,
+                             leaf_single=lf.leaf_single.iloc[0] if len(lf) else np.nan,
+                             leaf_lt5=lf.leaf_lt5.iloc[0] if len(lf) else np.nan,
+                             brier=q[f"brier_{lv}"], auroc=q[f"auroc_{lv}"]))
+    t = pd.DataFrame(rows)
+    if not len(t):
+        return t
+    wide = t.pivot_table(index=["dataset", "learner", "partition", "model"], columns="hp",
+                         values=["leaf_single", "leaf_lt5", "brier", "auroc"])
+    order = [(m, h) for m in ("leaf_single", "leaf_lt5", "brier", "auroc")
+             for h in ("default", "regularized") if (m, h) in wide.columns]
+    wide = wide[order]
+    wide.columns = [f"{m}_{h[:3]}" for m, h in wide.columns]
+    model_order = {"source L0": 0, "federated L3": 1, "central": 2}
+    wide = wide.reset_index()
+    wide["_o"] = wide.model.map(model_order)
+    return wide.sort_values(["dataset", "learner", "partition", "_o"]).drop(columns="_o")
 
 
 # ----------------------------------------------------------------------------
@@ -279,14 +344,18 @@ def main(argv=None):
     if a.command == "summary":
         print_summary(a.runs, tuple(a.partitions))
     else:
-        k, leaves = compare_hp(a.runs, a.runs_reg, a.partitions)
+        k, leaves, trade, draws = compare_hp(a.runs, a.runs_reg, a.partitions)
+        print(f"common draws: {len(draws)} "
+              f"({draws.groupby('dataset').size().to_dict()})")
         cols = ["dataset", "learner", "partition", "hp", "brier_r1", "brier_r2",
                 "brier_r_vs_plain1", "brier_r_vs_plain2", "auroc_gain_L3", "auroc_mc",
                 "auroc_m30", "auroc_m0", "brier_mc", "brier_m30"]
         pd.set_option("display.width", 250)
         print(k[[c for c in cols if c in k]].sort_values(["dataset", "learner", "partition", "hp"])
               .round(3).to_string(index=False))
-        print(leaves.sort_values(["dataset", "partition", "hp"]).round(3).to_string(index=False))
+        print("\nprivacy against performance (leaf fractions of the models behind each row,"
+              " Brier and AUROC averaged over K and draws)")
+        print(trade.round(3).to_string(index=False))
 
 
 if __name__ == "__main__":

@@ -243,7 +243,7 @@ def test_xgb_single_record_leaf_fraction():
     X, y = make_classification(n_samples=300, n_features=5, random_state=10)
     m = XGBClassifier(n_estimators=5, max_depth=6, n_jobs=1, random_state=0).fit(X, y)
     out = L.xgb_single_record_leaf_fraction(m, X)
-    assert out["n_leaves"] > 0 and 0 <= out["fraction"] <= 1
+    assert out["n_leaves"] > 0 and 0 <= out["fraction"] <= out["fraction_lt5"] <= 1
 
 
 def test_citl_intercept_and_slope():
@@ -254,3 +254,19 @@ def test_citl_intercept_and_slope():
     assert abs(np.sum(y - L.sigmoid(z + b))) < 1e-6
     assert L.calibration_slope(z, y) == pytest.approx(1.0, abs=0.1)
     assert L.citl_intercept(np.zeros(10), np.zeros(10)) == -20.0
+
+
+def test_leaf_counts_small_leaves():
+    leaves = np.array([7, 7, 7, 7, 7, 3, 3, 9, 4, 4, 4, 4])  # sizes 5, 2, 1, 4
+    assert L._leaf_counts(leaves) == (1, 3, 4)
+
+
+def test_leaf_fraction_lt5(forest_data):
+    X, y, rf, _ = forest_data
+    out = L.single_record_leaf_fraction(rf, X)
+    assert out["n_single"] <= out["n_lt5"] <= out["n_leaves"]
+    assert out["fraction_lt5"] == pytest.approx(out["n_lt5"] / out["n_leaves"])
+    reg = RandomForestClassifier(n_estimators=10, min_samples_leaf=5, random_state=4,
+                                 n_jobs=1).fit(X, y)
+    r = L.single_record_leaf_fraction(reg, X)
+    assert r["n_single"] == 0 and r["n_lt5"] == 0  # min_samples_leaf counts distinct rows
