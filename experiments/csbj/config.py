@@ -38,7 +38,7 @@ def results_dir():
 
 
 DATASETS = ("aids", "diabetic", "heart")
-DS_CODE = {"aids": 1, "diabetic": 2, "heart": 3}
+DS_CODE = {"aids": 1, "diabetic": 2, "heart": 3, "synthetic": 0}  # synthetic: tests only
 
 K_LIST = tuple(range(2, 11))
 
