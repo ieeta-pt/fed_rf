@@ -80,3 +80,32 @@ Smoke run used on the Mac (not used for the results):
 * XGBoost with the default `min_child_weight=1` cannot have a leaf with a
   single training row, because the hessian p(1-p) of a row is at most 0.25,
   so its single record leaf fraction is 0 by construction.
+
+## Pleiades
+
+Everything lives under `P=/data/home/jorge.miguel.ferreira.silva/storage/fedrf_csbj`
+(code, data, venv, runs, runs_regularized, preds, logs, results, .cache).
+`slurm/env.sh` sets the caches under `$P/.cache`, single threaded BLAS and the
+run folders, loads `python/3.12.12` and activates `$P/venv`.
+
+    module load python/3.12.12 && python -m venv $P/venv && source $P/venv/bin/activate
+    pip install -r experiments/csbj/requirements_lock.txt
+    sbatch --nice=100 experiments/csbj/slurm/tests.sbatch             # tests and Heart encoding
+    bash experiments/csbj/slurm/submit.sh --timing                     # task 0 of each dataset
+    bash experiments/csbj/slurm/submit.sh --r-rep 4                    # main grid
+    bash experiments/csbj/slurm/submit.sh --r-rep 4 --hp regularized --after <last job id>
+    python experiments/csbj/slurm/status.py --r-rep 4 [--hp regularized]
+
+`submit.sh` chains one array per dataset (`%1` inside each array, `afterany`
+between arrays, `--nice=100`), so at most one task of the project runs at any
+time. Tasks are requeue safe: finished cells are skipped.
+
+## Regularized sensitivity configuration
+
+`--hp regularized` uses RF `min_samples_leaf=5` and XGBoost `learning_rate=0.1`
+(everything else unchanged, same seeds), scores only the main arms (equal
+weights, uniform sampling, eval `test`, full calibration part, plus `fed_L1g`)
+and writes to `RUNS_REGULARIZED`. `analyze.py compare-hp` puts the shares, the
+AUROC gain of level 3, the centralized models and the single record leaf
+fractions of the two configurations side by side. With `min_samples_leaf=5`
+scikit-learn counts distinct bootstrap rows, so that fraction is 0 by construction.
