@@ -71,7 +71,7 @@ def save(fig, out, name):
 
 
 def letter(ax, i):
-    ax.text(-0.02, 1.06, "abcdefghijklmnop"[i], transform=ax.transAxes, fontweight="bold",
+    ax.text(-0.02, 1.06, "ABCDEFGHIJKLMNOP"[i], transform=ax.transAxes, fontweight="bold",
             ha="right", va="bottom")
 
 
