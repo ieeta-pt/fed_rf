@@ -23,6 +23,10 @@ Tables
     si_e11                             largest site as the source (S_E11_shares, S_E11_gain)
     si_e12                             size of the calibration sample (S_E12)
     si_hp                              default and regularized hyperparameters
+    si_regularized                     Brier and AUROC, default and regularized, and the
+                                       difference, common draws, no intervals (S_hp)
+    si_hp_quantities                   AUROC gain of Level 3 and Brier r_1, r_2, default and
+                                       regularized, common draws (S_hp_quantities)
 
 Usage
     python experiments/csbj/si_tables.py [--results CSBJ/results] [--out CSBJ/results/si_tables]
@@ -331,6 +335,60 @@ def hp(R):
     return tabular("lll", [r"Parameter & Default & Regularized \\"], blocks)
 
 
+HP_MODEL = {"source L0": "Level 0", "federated L3": "Level 3", "central": "Centralized"}
+
+
+def regularized(R):
+    """Brier and AUROC of each learner with default and regularized
+    hyperparameters (Random Forest with min_samples_leaf 5, XGBoost with
+    learning rate 0.1) and the difference, regularized minus default, on the
+    common draws. The centralized model does not depend on the partition and
+    takes one row."""
+    t = pd.read_csv(R / "S_hp.csv")
+    blocks = []
+    for title, g in groups(t):
+        rows = []
+        for model in ("source L0", "federated L3", "central"):
+            for p in (PARTS if model != "central" else ("equal",)):
+                q = one(g, model=model, partition=p)
+                if q is None:
+                    continue
+                cells = [HP_MODEL[model], PART[p] if model != "central" else ""]
+                for m in ("brier", "auroc"):
+                    a, b = q[f"{m}_def"], q[f"{m}_reg"]
+                    cells += [num(a), num(b), num(b - a)]
+                rows.append(cells)
+        blocks.append((title, rows))
+    header = [r" & & \multicolumn{3}{c}{Brier score} & \multicolumn{3}{c}{AUROC} \\",
+              r"\cmidrule(lr){3-5} \cmidrule(lr){6-8}",
+              r"Model & Partition & Default & Regularized & Difference "
+              r"& Default & Regularized & Difference \\"]
+    return tabular("llcccccc", header, blocks)
+
+
+def hp_quantities(R):
+    """AUROC gain of level 3 over level 0 and the Brier shares r_1 and r_2,
+    with default and regularized hyperparameters, on the common draws."""
+    t = pd.read_csv(R / "S_hp_quantities.csv")
+    blocks = []
+    for title, g in groups(t):
+        rows = []
+        for p in PARTS:
+            for k, hpv in enumerate(("default", "regularized")):
+                q = one(g, partition=p, hp=hpv)
+                if q is None:
+                    continue
+                cells = [PART[p] if k == 0 else "", hpv.capitalize(),
+                         ci(q.gain_mean, q.gain_lo, q.gain_hi)]
+                for lvl in (1, 2):
+                    s = ci(q[f"r{lvl}"], q[f"r{lvl}_lo"], q[f"r{lvl}_hi"])
+                    cells.append(s if s == "--" or bool(q[f"r{lvl}_reportable"]) else s + DAGGER)
+                rows.append(cells)
+        blocks.append((title, rows))
+    return tabular("llccc", [r"Partition & Setting & AUROC gain of Level 3 "
+                             r"& $r_1$, Brier & $r_2$, Brier \\"], blocks)
+
+
 def build(R, out):
     out.mkdir(parents=True, exist_ok=True)
     tables = {
@@ -350,6 +408,8 @@ def build(R, out):
         "si_e11": e11(R),
         "si_e12": e12(R),
         "si_hp": hp(R),
+        "si_regularized": regularized(R),
+        "si_hp_quantities": hp_quantities(R),
     }
     for name, body in tables.items():
         (out / f"{name}.tex").write_text(body)
