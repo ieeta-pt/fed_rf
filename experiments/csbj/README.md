@@ -140,7 +140,7 @@ and booktabs LaTeX), `numbers.json` and `numbers.md` (every value with its
 interval and one line on how it was computed). `figures.py` reads only those CSV
 files and writes PDF and PNG figures into `CSBJ_RESULTS/figures`. The logistic
 regression learner (E13) is run but not reported. On Pleiades, `slurm/report.sbatch`
-runs both (about 40 minutes for AIDS and Diabetic, mostly reading the run files), and only `$P/results` is
+runs both (about 40 minutes for the three datasets, mostly reading the run files), and only `$P/results` is
 copied back:
 
     rsync -av pleiades:/data/home/jorge.miguel.ferreira.silva/storage/fedrf_csbj/results/ "$CSBJ/results/"

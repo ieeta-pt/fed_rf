@@ -71,14 +71,22 @@ def save(fig, out, name):
 
 
 def letter(ax, i):
-    ax.text(-0.02, 1.02, "abcdefghijklmnop"[i], transform=ax.transAxes, fontweight="bold",
+    ax.text(-0.02, 1.06, "abcdefghijklmnop"[i], transform=ax.transAxes, fontweight="bold",
             ha="right", va="bottom")
 
 
-def plain_log_x(ax):
-    """Log x axis with plain numbers at 1, 2, 5 times powers of 10."""
+def plain_log_x(ax, decades=None):
+    """Log x axis with plain numbers.
+
+    Labels sit at 1, 2 and 5 times powers of 10 when the data span at most two
+    decades, and at powers of 10 only when they span more, so labels never overlap.
+    """
     ax.set_xscale("log")
-    ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+    if decades is None:
+        lo, hi = ax.dataLim.intervalx
+        decades = np.log10(hi / lo) if lo > 0 and hi > lo else 0
+    subs = (1.0, 2.0, 5.0) if decades <= 2 else (1.0,)
+    ax.xaxis.set_major_locator(LogLocator(base=10, subs=subs))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:,.0f}"))
     ax.xaxis.set_minor_formatter(NullFormatter())
 
