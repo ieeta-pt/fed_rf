@@ -35,7 +35,7 @@ def test_outputs_exist(report):
     for stem in ("T1_levels.csv", "T1_brier.tex", "T1_auroc.tex", "T2_shares.csv", "T2_shares.tex",
                  "T3_auroc_gain.csv", "T3_auroc_gain.tex", "perK_differences.csv", "S_E5.csv",
                  "S_E5.tex", "S_L1g.csv", "S_E9_leaves.csv", "S_E10.csv", "S_E11_gain.csv",
-                 "S_E12.csv", "S_hp.csv", "S_hp.tex", "S_calibration.csv", "S_rfxgb.csv",
+                 "S_E12.csv", "S_L2_nonpositive.csv", "S_L2_nonpositive.tex", "S_hp.csv", "S_hp.tex", "S_calibration.csv", "S_rfxgb.csv",
                  "anomalies.csv", "reliability.csv", "sites_r0_f0_K10.csv", "numbers.json",
                  "numbers.md"):
         assert (out / stem).exists(), stem
@@ -87,3 +87,19 @@ def test_e12_full_matches_t2(report):
            & (t2.partition == "equal")].r.iloc[0]
     assert a == pytest.approx(b)
     assert set(e12.n_cal.astype(str)) >= {"25", "full"}
+
+
+def test_l2_nonpositive_and_t2_denominator(report):
+    root, out, _ = report
+    t = pd.read_csv(out / "S_L2_nonpositive.csv")
+    m, _, _ = A.load_runs(root / "runs", ("synthetic",))
+    v = m[(m["eval"] == "test") & (m.arm == "src_L2") & (m.learner == "rf") & (m.partition == "dir0.5")]
+    full = v.groupby(["rep", "fold"]).n_cal.transform("max")
+    v = v[v.n_cal == full]
+    q = t[(t.arm == "src_L2") & (t.learner == "rf") & (t.partition == "dir0.5")
+          & (t.n_cal_label.astype(str) == "full")].iloc[0]
+    assert q.share == pytest.approx((v.rec_a <= 0).mean())
+    assert q.n_fits == len(v)
+    assert {"25", "full"} <= set(t.n_cal_label.astype(str))
+    tex = (out / "T2_shares.tex").read_text()
+    assert "Brier r2 den." in tex

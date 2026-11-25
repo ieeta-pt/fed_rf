@@ -6,7 +6,8 @@ logistic regression learner (E13) is computed by the runs but not reported.
 Outputs in the results folder
 
     T1_levels.csv / T1_brier.tex / T1_auroc.tex       seven models, mean [95% CI]
-    T2_shares.csv / T2_shares.tex                     r_1, r_2 for brier and mcc_pi (mcc_05 in the csv)
+    T2_shares.csv / T2_shares.tex                     r_1, r_2 for brier and mcc_pi (mcc_05 in the csv),
+                                                      with the denominator mean(m3l - m0) and its interval
     T3_auroc_gain.csv / T3_auroc_gain.tex             AUROC gain of level 3 per K, n/K, skew
     perK_differences.csv                              m - m0 per K with intervals (figures)
     S_E5.csv / S_E5.tex                               weights and sampling against the default
@@ -17,6 +18,7 @@ Outputs in the results folder
     S_E12.csv / S_E12.tex                             r_2 as a function of n_cal
     S_hp.csv / S_hp.tex                               default against regularized, common draws
     S_calibration.csv                                 calibration slope and intercept per level
+    S_L2_nonpositive.csv / .tex                       level 2 fits with a <= 0 and AUROC change
     S_rfxgb.csv                                       rf minus xgb for fed_L1 and fed_L2
     sites_r0_f0_K10.csv                               site prevalences for the figure
     reliability.csv                                   reliability curves, r0 f0 K5 dir0.5
@@ -201,6 +203,7 @@ def tex_T2(t2):
                 if len(q):
                     q = q.iloc[0]
                     r[f"{name} r{lvl}"] = fmt_ci(q.r, q.r_lo, q.r_hi, 2)
+                    r[f"{name} r{lvl} den."] = fmt_ci(q.den, q.den_lo, q.den_hi, 4)
                     r[f"{name} r{lvl} rep."] = "yes" if q.reportable else "no"
         rows.append(r)
     return pd.DataFrame(rows)
@@ -369,6 +372,50 @@ def table_E12(R):
                              **_ci_cols(A.mean_ci(g.m32 - g.m0), "fed_diff_")))
     t = pd.DataFrame(rows)
     return _sort(t, ["n_cal_value"]) if len(t) else t
+
+
+def table_L2_nonpositive(R):
+    """Level 2 fits with a <= 0: share per dataset, learner, partition, arm and
+    n_cal (E12 subsets and the full calibration part), pooled over K, draws and
+    sources, with the mean AUROC change of the level 2 arms (K averaged, paired
+    per draw): src_L2 - src_L0, fed_L2 - src_L0 and fed_L2 - fed_L0."""
+    m = R.m
+    v = m[(m["eval"] == "test") & m.arm.isin(["src_L2", "fed_L2"]) & m.learner.isin(MAIN_LEARNERS)
+          & m.weights.isin(["na", config.DEFAULT_WEIGHTS])
+          & m.sampling.isin(["na", config.DEFAULT_SAMPLING])].copy()
+    full = v.groupby(["dataset"] + A.DRAW).n_cal.transform("max")
+    v["n_cal_label"] = np.where(v.n_cal.to_numpy() == full.to_numpy(), "full", v.n_cal.astype(str))
+    v["nonpos"] = v.rec_a <= 0
+    share = (v.groupby(["dataset", "learner", "partition", "arm", "n_cal_label"])
+             .agg(n_fits=("nonpos", "size"), n_nonpos=("nonpos", "sum"), share=("nonpos", "mean"),
+                  mean_n_cal=("n_cal", "mean")).reset_index())
+    rows = []
+    for n in list(config.N_CAL_LIST) + ["full"]:
+        pdw = _main(R.per_draw("auroc", view=("ncal", n)))
+        for (ds, lr, part), g in pdw.groupby(["dataset", "learner", "partition"]):
+            for arm, d in (("src_L2", g.m2 - g.m0), ("fed_L2", g.m32 - g.m0)):
+                extra = _ci_cols(A.mean_ci(g.m32 - g.m30), "dauroc_own_L0_") if arm == "fed_L2" else {}
+                rows.append(dict(dataset=ds, learner=lr, partition=part, arm=arm,
+                                 n_cal_label=str(n), **_ci_cols(A.mean_ci(d), "dauroc_vs_src_L0_"),
+                                 **extra))
+    t = share.merge(pd.DataFrame(rows), on=["dataset", "learner", "partition", "arm", "n_cal_label"],
+                    how="left")
+    order = {str(n): i for i, n in enumerate(list(config.N_CAL_LIST) + ["full"])}
+    return _sort(t.assign(_n=t.n_cal_label.map(order)), ["arm", "_n"]).drop(columns="_n")
+
+
+def tex_L2_nonpositive(t):
+    rows = []
+    for _, q in t.iterrows():
+        own = (fmt_ci(q.dauroc_own_L0_mean, q.dauroc_own_L0_lo, q.dauroc_own_L0_hi)
+               if q.arm == "fed_L2" else "")
+        rows.append({"Dataset": q.dataset, "Learner": q.learner, "Partition": q.partition,
+                     "Arm": q.arm, "n_cal": q.n_cal_label, "Share a<=0": fmt(q.share),
+                     "Fits": int(q.n_fits),
+                     "Delta AUROC vs src_L0": fmt_ci(q.dauroc_vs_src_L0_mean, q.dauroc_vs_src_L0_lo,
+                                                     q.dauroc_vs_src_L0_hi),
+                     "Delta AUROC vs fed_L0": own})
+    return pd.DataFrame(rows)
 
 
 def table_calibration(R):
@@ -594,7 +641,7 @@ H_SHARE = ("r_l = mean(m_l - m0) / mean(m3l - m0), K averaged, bootstrap interva
            "reportable when the interval of mean(m3l - m0) excludes 0.")
 
 
-def build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib, anom, hp,
+def build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib, anom, hp, l2neg,
                   meta, hyper):
     N = Numbers()
     # design
@@ -734,6 +781,17 @@ def build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib,
     for _, q in gain11.iterrows():
         N.add(f"e11.diff.auroc.L3.{q.dataset}.{q.learner}.{q.partition}", q.gain_mean,
               H_DIFF + " fed_L0 minus the largest source.", lo=q.gain_lo, hi=q.gain_hi, J=q.gain_J)
+    # level 2 fits with a <= 0
+    for _, q in l2neg.iterrows():
+        base = f"l2neg.{q.arm}.{q.dataset}.{q.learner}.{q.partition}.n{q.n_cal_label}"
+        N.add(f"{base}.share", q.share, "Share of level 2 fits with a <= 0, pooled over K, draws "
+              "and sources (eval test, default configuration).", n_fits=int(q.n_fits))
+        N.add(f"{base}.dauroc_vs_src_L0", q.dauroc_vs_src_L0_mean,
+              H_DIFF + " Level 2 arm minus src_L0 (mean source model).",
+              lo=q.dauroc_vs_src_L0_lo, hi=q.dauroc_vs_src_L0_hi, J=q.dauroc_vs_src_L0_J)
+        if q.arm == "fed_L2":
+            N.add(f"{base}.dauroc_vs_fed_L0", q.dauroc_own_L0_mean, H_DIFF + " fed_L2 minus fed_L0.",
+                  lo=q.dauroc_own_L0_lo, hi=q.dauroc_own_L0_hi, J=q.dauroc_own_L0_J)
     # E12
     for _, q in e12.iterrows():
         N.add(f"e12.r.brier.L2.{q.dataset}.{q.learner}.{q.partition}.n{q.n_cal}", q.r,
@@ -863,7 +921,9 @@ def build(runs, runs_reg, preds, out, datasets, r_rep, r_rep_reg, allow_incomple
         reliability(preds, datasets).to_csv(out / "reliability.csv", index=False)
     anom = anomalies(R, runs)
     anom.to_csv(out / "anomalies.csv", index=False)
-    N = build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib, anom, hp,
+    l2neg = table_L2_nonpositive(R)
+    write_table(l2neg, out, "S_L2_nonpositive", tex_df=tex_L2_nonpositive(l2neg))
+    N = build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib, anom, hp, l2neg,
                       meta, hyper)
     N.write(out)
     return N
