@@ -29,6 +29,8 @@ relative to the repository root. The checks were run on the Mac on 2026-11-25.
 | step | runs in | code |
 |---|---|---|
 | training of the site model | each training DataSite, as approved code | `fed_rf_mk/remote_tasks.py`, `ml_experiment` |
+| counts only (level 1, sites other than the source) | each such training DataSite, as approved code | `fed_rf_mk/remote_tasks.py`, `site_counts` |
+| what each site and the deployment site receive and release | the coordinator, bound in the code requests | `fed_rf_mk/release.py`, `site_plan`, `deployment_ladder`; `FLClient.send_request`, `FLClient.send_evaluation_request` |
 | site weights, pooled prevalence, tree allocation and selection | the requester's Python process (the coordinator), not a DataSite | `fed_rf_mk/client.py`, `FLClient.run_model`; `fed_rf_mk/aggregation/models.py`, `ModelAggregator.combine`, `ModelAggregator.merge_estimators` |
 | levels 0, 1, 2 and 3 at the deployment site | the evaluation DataSite, as approved code | `fed_rf_mk/remote_tasks.py`, `evaluate_global_model` (inner `_ladder_evaluate`) |
 
@@ -41,38 +43,48 @@ installed at every DataSite. In the local test, the server process gets the
 
 ## 3. What each training site sends, per level
 
-`ml_experiment` runs once per site and returns one dict. The training round is
-the same for every level. Every site sends the following.
+`model_params["release_level"]` sets what leaves the training sites
+(`fed_rf_mk/release.py`, `site_plan`; `fed_rf_mk/client.py`,
+`FLClient.send_request`). The values are `0`, `1`, `2`, `3`, `3+1`, `3+2`
+and `all`, with `all` as the default. Levels 0, 1 and 2 also need
+`source_site`.
 
-* `model`: the fitted model, pickled with `cloudpickle` (all T_k trees).
-* `model_type`, `n_base_estimators`, `n_incremental_estimators`, `train_size`,
-  `test_size`: the parameters it received.
-* `sample_size` and `n_train`: n_k, the number of training records.
-* `n_pos`: n_k^+, the training records of the positive class
-  (`classes_[1]`). It is None when the model does not have two classes.
-* `oob_scores`: the out of bag accuracy of each tree
-  (`ladder.tree_oob_scores`). Sent only for Random Forest with
-  `tree_sampling="oob"`, None otherwise.
-* `analysis_status`.
-* `shap_data` and `pfi_data`, only when both the request (`allow_analysis`)
-  and the site policy (`datasites.is_analysis_allowed`) allow analysis. This is
-  unchanged.
+* **What the site sends.** The plan is put into the `modelParams` of each
+  request as `release`, a dict of which items to send. The site returns only
+  those items (`remote_tasks.py`, `ml_experiment`).
+* **Counts only.** At level 1, the sites other than the source run
+  `remote_tasks.site_counts`. It trains no model and returns only n_k and
+  n_k^+.
+* **Sites with no role.** A site with no role at a level gets no request.
+* **No analysis outputs.** With a `release` dict, no SHAP or PFI output is
+  computed or sent.
+* **Level 3 and 3 with 2.** For these levels the site weights decide which
+  counts leave. A site sends n_k with `size` weights, n_k^+ with `positives`
+  weights, and no count with `equal` or `manual` weights.
+* **Out of bag scores.** They leave only for Random Forest with
+  `tree_sampling="oob"`, at 3, 3+1 and 3+2.
 
-The ladder needs the following at each level. The code sends all of it in the
-one round above.
+The table below is what `experiments/csbj/tests/test_pysyft_release.py`
+observed. It used three training sites, the source `site1`, Random Forest,
+`size` weights and `oob` sampling. The keys are those returned by each site
+and stored in `FLClient.site_results`. The full record is in
+`experiments/csbj/results/pysyft_release.json`.
 
-| level | what the ladder needs from the training sites | what the code sends |
+| release_level | source site (`site1`) | other sites (`site0`, `site2`) |
 |---|---|---|
-| 0 | the model of the source site | every site: model, n_k, n_k^+ (and out of bag scores for oob sampling) |
-| 1 | level 0, plus n_k and n_k^+ of every site | the same |
-| 2 | the model of the source site (the labels are at the deployment site) | the same |
-| 3, 3 with 1, 3 with 2 | the models of every site (out of bag scores for oob sampling), plus the counts for 3 with 1 | the same |
+| 0 | `ml_experiment`: model, model_type | no request |
+| 1 | `ml_experiment`: model, model_type, n_train, n_pos | `site_counts`: n_train, n_pos |
+| 2 | `ml_experiment`: model, model_type | no request |
+| 3 | `ml_experiment`: model, model_type, n_train (size weights), oob_scores | the same |
+| 3+1 | `ml_experiment`: model, model_type, n_train, n_pos, oob_scores | the same |
+| 3+2 | `ml_experiment`: model, model_type, n_train (size weights), oob_scores | the same |
+| all | `ml_experiment`, the full single round: model, model_type, n_train, n_pos, oob_scores, sample_size, analysis_status, n_base_estimators, n_incremental_estimators, train_size, test_size (plus shap_data and pfi_data when analysis is allowed) | the same |
 
-With `train_size >= 1` (or missing), every record of the site trains its model
-and no local test part is kept (`ml_experiment`, `preprocess`). With
-`train_size < 1`, the old split with `random_state=42` is used. The local seed
-of the model is `modelParams["random_state"]` (default 42).
-`FLClient.run_model` sets it per site from `site_seeds`.
+* **Defaults of the training run.** With `train_size >= 1` (or missing),
+  every record of the site trains its model (`ml_experiment`, `preprocess`).
+* **Model seed.** The local seed of the model is
+  `modelParams["random_state"]` (default 42). `FLClient` sets it per site from
+  `site_seeds`. `site_seeds` itself stays at the coordinator.
 
 ## 4. Combination at the coordinator
 
@@ -97,17 +109,32 @@ of the model is `modelParams["random_state"]` (default 42).
 * **XGBoost.** No trees are merged. The site models are kept with their
   weights as `ensemble_members`. `seed_model` is the member with the largest
   weight (ties to the first site), as before.
-* **What goes to the deployment site.** `modelParams["ladder"]`, which holds:
-  * `sites`
-  * `models`: the K site models, every tree
-  * `weights`, `weights_kind`
-  * `n`, `n_pos`, `pi`
-  * `model_type`
-  * for Random Forest also `sampling`, `seed`, `T_k`, `t`, `selections` and
-    `oob_fallback`
+* **Levels 0, 1 and 2.** There is no combination (`FLClient._source_ladder`).
+  The ladder dict holds the model of the source and its index among the
+  training sites. For level 1 it also holds π (`ladder.pooled_prevalence`,
+  from the counts of every site) and π_k of the source.
+* **What goes to the deployment site.** `release.deployment_ladder` keeps only
+  the keys that the level needs, and the evaluation request binds them. The
+  keys below were observed in `test_pysyft_release.py` (Random Forest; the
+  last five keys of the level 3 list are specific to Random Forest).
 
-  It also gets `model` and `ensemble_members`.
-* **SHAP and PFI.** They are averaged with the same site weights.
+  | release_level | keys of `modelParams["ladder"]` | models |
+  |---|---|---|
+  | 0, 2 | model_type, sites, sources, models | 1 (source) |
+  | 1 | model_type, sites, sources, models, pi, pi_k | 1 (source) |
+  | 3, 3+2 | model_type, sites, sources, models, weights, weights_kind, sampling, seed, T_k, t, selections, oob_fallback | K |
+  | 3+1 | as 3, plus pi, pi_k | K |
+  | all | as 3+1, plus n, n_pos | K |
+
+  * For every level except `all`, the other keys of the evaluation
+    `modelParams` are only `model_type`, `release_level`, `calibration` and
+    `return_predictions`.
+  * For `all`, the deployment site gets the full `model_params`, as before,
+    without `site_seeds` and `approval_timeout`. That includes `model` and
+    `ensemble_members`.
+* **π_k.** It is computed at the coordinator as n_k^+/n_k (int64 division,
+  as in the simulation) and sent as `pi_k`.
+* **SHAP and PFI.** They are averaged with the same site weights (only `all` sends them).
 
 ## 5. What the deployment site computes and keeps
 
@@ -138,6 +165,23 @@ set. It runs at the evaluation DataSite and does the following.
     or `ladder.xgb_federated_global_shift`.
   * Level 3 with 2 fits `fit_recalibration` on the calibration part. For RF,
     z = logit(`clip_prob`(p, T)).
+* **Arms per level.** The deployment site computes only the arms that its
+  `release_level` allows (`evaluate_global_model`, `_ladder_evaluate`). It
+  checks that what it needs was received.
+
+  | release_level | arms |
+  |---|---|
+  | 0 | src_L0 (source) |
+  | 1 | src_L0, src_L1 (source) |
+  | 2 | src_L0, src_L2 (source) |
+  | 3 | src_L0 of every site, fed_L0 |
+  | 3+1 | src_L0, src_L1 of every site, fed_L0, fed_L1, fed_L1g |
+  | 3+2 | src_L0, src_L2 of every site, fed_L0, fed_L2 |
+  | all | every arm |
+
+  `test_pysyft_release.py` observed exactly these arms for every level, with
+  source `site1`, so for example `src1_L0` at level 0. MCC at π is None when π
+  was not released (levels 0, 2, 3 and 3+2).
 * **What it returns.**
   * For every arm, AUROC, AUPRC, Brier, MCC at π and MCC at 0.5 on the test
     part. Level 2 arms also return a and b.
@@ -164,53 +208,102 @@ The new options in `model_params` and their defaults are in
 | `site_seeds` | None, so every site uses 42 |
 | `calibration` | `n_cal` None, `fraction` 0.2, `random_state` 42 |
 | `return_predictions` | False |
+| `release_level` | `all` |
+| `source_site` | None (needed for 0, 1, 2) |
+| `approval_timeout` | 300 s |
 
 ## 6. How code requests are approved
 
-* **Requests.**
-  * `DataSiteManager.send_training_requests` and `send_evaluation_requests`
-    (`fed_rf_mk/orchestrator/clients.py`) wrap `ml_experiment` and
-    `evaluate_global_model` in `sy.syft_function`, with
-    `MixedInputPolicy(client, data=<asset>, dataParams=dict, modelParams=dict)`.
-  * Each one is put in a `sy.Project` and sent.
-  * The output policy is the syft default, which is `OutputPolicyExecuteOnce`
-    as observed.
-  * A request holds the source of the function and pins the asset. It holds no
-    values of `dataParams` or `modelParams`, which are only typed as `dict`.
-    The values are passed later, when `FLClient.run_model` and
-    `FLClient.run_evaluate` call `datasite.code.ml_experiment(...)` and
-    `datasite.code.evaluate_global_model(...)`.
-  * In a check with `auto_accept=True`, the requester called one approved
-    function twice with different `dict` values, and both calls ran.
+* **Requests with bound values.**
+  * `DataSiteManager._send_code_request` (`fed_rf_mk/orchestrator/clients.py`)
+    wraps the site function in `sy.syft_function`, with
+    `MixedInputPolicy(client, data=<asset>, dataParams=sy.Constant(val=...), modelParams=sy.Constant(val=...))`.
+    It is used by `send_training_requests` and `send_evaluation_requests`.
+  * Each request is put in a `sy.Project` and sent.
+  * PySyft 0.9.5 can bind values this way. `sy.Constant` is
+    `CreatePolicyRuleConstant`, which becomes the `Constant` rule of
+    `syft/service/policy/policy.py`, and `Constant.transform_kwarg` returns the
+    bound value.
+  * The approved code therefore runs with the bound values. A call that passes
+    other values gets the bound ones instead, so other values need a new
+    request and a new approval. This was observed twice: in a scratch check,
+    and in `test_mock_accounts_binding_analysis`, where `ml_experiment` was
+    called with `train_size=0.5` and still trained on the bound
+    `train_size=0.7`.
+  * `FLClient.run_model` and `FLClient.run_evaluate` call the approved
+    functions with `data` only.
+* **Order of the requests.**
+  * `FLClient.send_request` sends only the training requests.
+  * The evaluation request carries the released models, so it can only be sent
+    after training. It is sent by `FLClient.send_evaluation_request`, or by
+    `run_evaluate` when that has not happened yet.
+  * `run_model` and `run_evaluate` wait up to `approval_timeout` seconds
+    (default 300) for the approval (`DataSiteManager.wait_for_approval`). They
+    stop when a request is rejected.
+  * The old fallback of `run_evaluate`, which built and called an unapproved
+    function, was removed.
 * **Who approves.** The data owner, logged in as the DataSite admin, approves.
-  * Manual mode (`FLServer(..., auto_accept=False)`): `FLServer.list_pending_requests`,
-    `FLServer.inspect_request(i)` (returns the code) and
-    `FLServer.approve_request(i)` (`request.approve(approve_nested=True)`),
-    in `fed_rf_mk/server.py`.
-  * `auto_accept=True` is the default of `FLServer.__init__`. A thread runs
-    `check_and_approve_incoming_requests` (`fed_rf_mk/datasites.py`). Once a
-    second, it approves every request that is not approved yet, with
-    `approve_nested=True`, without looking at the code. The equivalence test
-    uses this mode, as asked.
+  * `FLServer.__init__` now has `auto_accept=False` as its default.
+  * The manual flow is in `fed_rf_mk/server.py`:
+    * `FLServer.list_pending_requests` returns the index and function name of
+      each pending request. It now reads `client.requests`, since `client.code`
+      has no `len` in 0.9.5.
+    * `FLServer.inspect_request(i)` returns the code.
+    * `FLServer.request_parameters(i)` returns the bound `dataParams` and
+      `modelParams`, a new method.
+    * `FLServer.approve_request(i)` approves.
+  * `test_pysyft_release.py` uses this manual flow for every release level. It
+    checks that the bound values equal those the client sent.
+  * With `auto_accept=True`, passed explicitly, the thread
+    `check_and_approve_incoming_requests` (`datasites.py`) still approves every
+    request once a second without looking at it.
+  * `auto_accept=True` is passed explicitly in the equivalence test, in the
+    README quickstart, and in the example notebook (datasite 2 only, as
+    before).
 * **Mock data seen by the requester.**
-  * `FLServer.__init__` sets `mock_path = data_path` when no mock is given.
-    `create_syft_dataset` (`fed_rf_mk/datasites.py`) then uploads the real data
-    as the mock of the asset.
-  * Logged in as the data scientist, `asset.mock` was equal to the real data
-    in the check.
-  * `generate_mock` (`fed_rf_mk/datasets.py`) returns the data unchanged
-    (synthetic generation is disabled). `FLServer` never reaches it.
+  * `FLServer` no longer sets `mock_path = data_path`.
+  * Without a mock file, `create_syft_dataset` (`datasites.py`) uploads
+    `datasets.generate_mock(data)` and logs that a synthetic mock was used.
+  * The synthetic mock has the columns and dtypes of the data and 100 rows. The
+    row count is fixed, so it does not reveal the size of the site. Values are
+    drawn independently for each column with seed 0. Numeric columns are
+    uniform between their minimum and maximum (integers inclusive). Other
+    columns, booleans included, are uniform over their observed values.
+  * Through the minimum, the maximum and the observed categories, the mock
+    still reveals the range of each column and the set of categories.
+  * The dead code after `return data` in `generate_mock` was removed.
+  * Logged in as the data scientist, the mock had the columns and dtypes of the
+    data and shared no row with it.
 * **Accounts.** `spawn_server` does the following.
-  * It logs in with the PySyft default admin account, `info@openmined.org` /
-    `changethis`, and syft warns that the password is the default.
-  * It enables guest signup.
-  * It creates a data scientist account, `fedlearning@rf.com`, with the
-    password `****`.
-* **Analysis policy.** `FLServer(analysis_allowed=True)` sets
-  `datasites.ANALYSIS_ALLOWED` in the process that calls `FLServer.start`.
-  Inside the approved code (the server process), `is_analysis_allowed()`
-  returned False in the check. So SHAP and PFI at the sites stay off in this
-  local setup, whatever `analysis_allowed` says.
+  * The data owner gives the new admin password and the data scientist
+    password, as arguments of `spawn_server` or `FLServer`, or in
+    `FEDRF_ADMIN_PASSWORD` and `FEDRF_DS_PASSWORD`. The email comes from
+    `FEDRF_DS_EMAIL` and defaults to `fedlearning@rf.com`.
+  * Without a password it stops with an error, and the PySyft default
+    `changethis` is refused as the new admin password.
+  * It logs in with the default admin password and changes it
+    (`client.account.set_password(..., confirm=False)`). A later login with
+    `changethis` failed in the test.
+  * Guest signup is disabled unless `allow_guest_signup=True` or
+    `FEDRF_ALLOW_GUEST_SIGNUP=1`. `settings.signup_enabled` was False in the
+    test.
+  * No password is written in the code. The tests make random ones with
+    `secrets.token_urlsafe`, and the notebook asks for them with `getpass`.
+* **Analysis policy.**
+  * `datasites.set_analysis_allowed`, which `FLServer.start` calls with
+    `analysis_allowed`, now also writes `FEDRF_ANALYSIS_ALLOWED` to the
+    environment.
+  * `is_analysis_allowed` reads that variable first.
+  * The DataSite process is started after the variable is set and inherits it,
+    so the approved code sees the policy of its DataSite.
+  * In the test, `ml_experiment` returned `analysis_status="enabled"` with
+    `pfi_data` under `analysis_allowed=True`, and `"disabled_by_silo_policy"`
+    with no `pfi_data` under `False`.
+  * Limits:
+    * A change made after the DataSite started (`FLServer.set_analysis_policy`)
+      does not reach it.
+    * The variable is per process, so DataSites started from one process take
+      the value set last before each launch.
 
 ## 7. Equivalence with the simulation
 
@@ -221,8 +314,10 @@ output is in `experiments/csbj/results/pysyft_equivalence.json`.
   partition and seeds of `experiments/csbj/run_task.py`.
   * Every site and the deployment site get a CSV with their records, in the
     order of the simulation. The test checks that the CSV round trip is exact.
-  * Each one is served by an `FLServer` with `auto_accept=True`.
-  * `FLClient` runs `send_request`, `run_model` and `run_evaluate`.
+  * Each one is served by an `FLServer` with `auto_accept=True` passed explicitly,
+    random passwords and the synthetic mock.
+  * `FLClient` runs `send_request`, `run_model` and `run_evaluate`, with
+    `release_level="all"` and the values bound in the requests.
 * **Model settings.**
   * Model seeds come from `site_seeds`, with `seed_for(ds, r, f, part, K, k, learner)`.
   * The tree selection seed is `[ds, r, f, part, K, 7, w, s]`.
@@ -253,74 +348,89 @@ output is in `experiments/csbj/results/pysyft_equivalence.json`.
   per site are t = (56, 26, 18), and there was no out of bag fallback.
 * **Diabetic sites.** n_k = (226, 234, 40, 420) and
   n_k^+ = (112, 122, 12, 242).
-* **Run time.** Both configurations take about 65 s together on the Mac.
+* **Rerun.** The test was rerun after the changes of 1b, with the same result:
+  largest difference 0.0 in every arm, and in a and b.
+* **Run time.** Both configurations take about 60 s together on the Mac.
 
 ## 8. Tests
 
 * **E1 environment.** `fed_rf_mk/tests/test_ladder.py` and
-  `experiments/csbj/tests` give 71 passed and 1 skipped. The skipped one is the
-  PySyft test.
-* **PySyft environment.** `fed_rf_mk/tests` run from `fed_rf_mk`, as their
-  relative paths require, gives 37 passed. This includes the existing
-  `test_aggregation.py` (the old check of 6 + 4 trees still holds),
-  `test_weights.py` and `test_remote_tasks.py`. New tests: largest remainder
-  and seeded selection in `combine`, oob sampling without scores raising an
-  error, and the counts and oob scores returned by `ml_experiment`.
-* **Simulation unchanged.** `run_task.py`, `analyze.py`, `tables.py` and
-  `figures.py` were not changed. The existing functions of `ladder.py` were
-  not changed, and only `rf_tree_probs` was added. `numbers.json`, the tables
-  and the figures were not regenerated and did not change.
+  `experiments/csbj/tests` give 71 passed and 2 skipped. The skipped ones are
+  the two PySyft tests.
+* **PySyft environment, `fed_rf_mk/tests`.** Run from `fed_rf_mk`, as their
+  relative paths require: 40 passed. They include `test_aggregation.py`,
+  `test_weights.py`, `test_remote_tasks.py` and the new `test_datasets.py`
+  (synthetic mock, release plan, deployment keys).
+* **PySyft environment, `experiments/csbj/tests`.** 54 passed, in about 5
+  minutes:
+  * the E1 tests;
+  * `test_pysyft_equivalence.py` (2 configurations);
+  * `test_pysyft_release.py`: 7 release levels with manual approval, plus mock,
+    accounts, binding and analysis switch.
+* **Simulation unchanged.**
+  * `run_task.py`, `analyze.py`, `tables.py` and `figures.py` were not changed.
+  * The functions of `ladder.py` were not changed in 1b.
+  * `numbers.json`, the tables and the figures were not regenerated and did not
+    change.
 
-## 9. What Section 2.7 says and the code does not do
+## 9. What the introduction and Section 2.7 say and the code does not do
 
-The paper text was not available here. The local `fedrf_csbj_paper.pdf` and
-`fedrf_csbj_paper.zip` (21 November) are an older version without the ladder,
-in which Section 2.7 is "Federated Learning Protocol". The points below are
-checked against Section 2.7 as described in `INSTRUCOES_E1.md` 9.1: the ladder
-is implemented in fed_rf, and every site runs a PySyft DataSite that runs
-submitted code only after the data owner approves it.
+* **Paper text.** It was not available here. The local `fedrf_csbj_paper.pdf`
+  and `fedrf_csbj_paper.zip` (21 November) are an older version without the
+  ladder. The points below are checked against the claims as described in
+  `INSTRUCOES_E1.md` 9.1 and 1b: data owners approve the code that runs on
+  their data, and the ladder, including what each level releases, is
+  implemented in fed_rf.
+* **Closed in this step.** Approval is manual by default, the mock is never
+  the real data, approval covers the parameter values, there is a release per
+  level, no password is written in the code, and the analysis switch reaches
+  the DataSite.
 
-1. **Approval without review by default.** `FLServer` approves every request
-   automatically unless it is started with `auto_accept=False`
-   (`server.py`, `FLServer.__init__`; `datasites.py`,
-   `check_and_approve_incoming_requests`). The code is then run without anyone
-   reviewing it.
-2. **Approval covers the code, not the parameters.** `dataParams` and
-   `modelParams` are only typed (`orchestrator/clients.py`), and an approved
-   function could be called again with other values.
-3. **The mock is the real data by default** (`server.py`, `FLServer.__init__`;
-   `datasites.py`, `create_syft_dataset`).
-4. **No release per level.** One training round sends every site's full
-   model, n_k and n_k^+ to the coordinator (`remote_tasks.py`,
-   `ml_experiment`; `client.py`, `FLClient.run_model`). There is no option
-   for a level 0 run in which only the source site releases its model and the
-   other sites release nothing.
-   * The deployment site receives the models of all K sites
-     (`modelParams["ladder"]["models"]`), and evaluates every site as a source.
-5. **The coordinator is not a DataSite.** Site weights, π, the tree allocation
+What the code still does not do, or does only in part:
+
+1. **Approval without review is still possible.** `auto_accept=True` still
+   approves every request without review. It must be passed explicitly. The
+   equivalence test uses it.
+2. **The default is still the single round.** `release_level="all"` sends
+   every site's full model, counts, out of bag scores (for oob sampling) and
+   training parameters. It also sends the analysis outputs when they are
+   allowed. The deployment site then receives the full `model_params`. The
+   other values release only what the level needs (section 3).
+3. **Weights reveal relative sizes.** At 3 and 3+2 with `size` or `positives`
+   weights, the counts that the weights need leave every site. With any
+   weights, the deployment site receives the normalized weights, which give
+   the relative site sizes for `size` weights.
+4. **The coordinator is not a DataSite.** Site weights, π, the tree allocation
    and the tree selection are computed in the requester's process, which sees
-   every model and every count.
-6. **Counts sent with every model.** n_k and n_k^+ leave every site with every
-   model, even when only level 0 or level 3 without correction is used.
-7. **Outputs that leave the deployment site.** The labeled records never leave
-   it, but metrics computed from its labels (AUROC, Brier, MCC, and a and b of
-   level 2) are returned to the requester. With `return_predictions=True`,
-   per record outputs of the test part are returned too.
-8. **The E1 numbers do not come from PySyft runs.** They come from the
-   simulation (`experiments/csbj/run_task.py`), which calls the `ladder.py`
-   functions directly. The PySyft path was shown to give the same predictions
-   in the two configurations above (r = 0, f = 0). Heart, the other
-   partitions, K values and draws, and the variants E5, E10, E12 and E13 were
-   not run through PySyft. The PySyft path has no logistic regression learner
-   (E13).
-9. **fed_rf_mk must be installed at every DataSite.** The approved code imports
+   every released model and count.
+5. **The deployment site sees every source at level 3.** At 3, 3+1 and 3+2 it
+   receives every model, and it also evaluates each model as a source
+   (`src<k>_L0`, and L1 or L2 where the level allows it).
+6. **Outputs that leave the deployment site.** The labeled records never leave
+   it, but metrics computed from its labels are returned to the requester:
+   AUROC, AUPRC, Brier, MCC, and a and b of level 2. With
+   `return_predictions=True`, per record outputs of the test part are returned
+   too.
+7. **The E1 numbers do not come from PySyft runs.** They come from the
+   simulation (`experiments/csbj/run_task.py`). The PySyft path gives the same
+   predictions in the two configurations of section 7. Heart, the other
+   partitions, K values and draws, E5, E10, E12 and E13 were not run through
+   PySyft, and there is no logistic regression learner on the PySyft path.
+8. **fed_rf_mk must be installed at every DataSite.** The approved code imports
    `fed_rf_mk.ladder` there, and nothing in the request installs it.
-10. **The analysis switch does not reach the approved code.**
-    `FLServer(analysis_allowed=True)` does not reach the process where the
-    approved code runs (section 6), so SHAP and PFI at the sites stay off in
-    the local setup.
+9. **Limits of the analysis switch.** See section 6: a change made after
+   launch is not seen by the DataSite, and the variable is per process.
+10. **The synthetic mock reveals column ranges and categories.** It shows the
+    range of every numeric column and the set of values of every other column,
+    the label included.
+11. **Approval binds values, not use.** It covers the code and the bound
+    values. A function approved once ran a second time in the check, even
+    though the syft output policy is `OutputPolicyExecuteOnce`. The second run
+    used the same bound values.
 
-## 10. Changes to fed_rf in this step
+## 10. Changes to fed_rf
+
+### 9.1
 
 * `fed_rf_mk/remote_tasks.py`
   * `ml_experiment` returns n_k, n_k^+ and, for oob sampling, the out of bag
@@ -346,3 +456,50 @@ submitted code only after the data owner approves it.
     `site_weights="manual"`. The default is now `equal`.
   * The number of trees per site follows the largest remainder rule.
   * The selection is reproducible (seed 42 by default).
+
+### 1b
+
+* `fed_rf_mk/server.py`
+  * `FLServer` has `auto_accept=False` by default.
+  * It no longer sets `mock_path = data_path`.
+  * It passes the account settings to `spawn_server`.
+  * `list_pending_requests` works with syft 0.9.5 and returns the pending
+    requests.
+  * There is a new `request_parameters`.
+* `fed_rf_mk/datasites.py`
+  * Synthetic mock when there is no mock file.
+  * Admin password changed at start, guest signup off by default, data
+    scientist password given by the data owner (arguments or environment).
+  * The analysis policy goes through `FEDRF_ANALYSIS_ALLOWED`.
+* `fed_rf_mk/datasets.py`: `generate_mock` builds the synthetic mock, and the
+  dead code is gone.
+* `fed_rf_mk/release.py` (new): `site_plan`, `released_keys` and
+  `deployment_ladder`.
+* `fed_rf_mk/remote_tasks.py`
+  * `ml_experiment` honours `release`.
+  * There is a new `site_counts`.
+  * The ladder branch of `evaluate_global_model` computes only the arms of its
+    `release_level`, and takes `pi_k` from the coordinator.
+* `fed_rf_mk/orchestrator/clients.py`: requests bind `dataParams` and
+  `modelParams` with `sy.Constant`, and there is a new `wait_for_approval`.
+* `fed_rf_mk/client.py`
+  * `send_request` follows the release plan, and there is a new
+    `send_evaluation_request`.
+  * `run_model` waits for approvals and handles levels 0 to 2.
+  * `run_evaluate` sends the evaluation request after training and has no
+    unapproved fallback.
+  * `site_results`, `site_params_sent` and `eval_params_sent` keep what was
+    sent and received.
+* `fed_rf_mk/aggregation/models.py`: partial counts for `size` and
+  `positives` weights, and `pi_k` and `sources` in the ladder dict.
+* `README.md` quickstart and `examples/aids_clinical_dataset.ipynb`
+  * Passwords come from the environment (`getpass` in the notebook).
+  * `send_request` is called explicitly.
+  * The evaluation request is approved after training in the notebook.
+* **Behaviour changes for existing users.**
+  * `FLServer` needs passwords and approves by hand by default.
+  * The mock is synthetic.
+  * The evaluation request is sent after training, and `run_model` and
+    `run_evaluate` wait for approvals.
+  * The approved code runs only with the values bound at request time.
+

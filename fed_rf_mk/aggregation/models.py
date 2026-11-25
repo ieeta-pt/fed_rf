@@ -70,29 +70,41 @@ class ModelAggregator:
     # Counts and weights
     # ------------------------------------------------------------------
 
-    def counts(self, site_order: Sequence[str]) -> Tuple[np.ndarray, np.ndarray]:
-        """(n_k, n_k^+) of the training part of each site, in ``site_order``."""
-        n, n_pos = [], []
+    def counts(self, site_order: Sequence[str], need=("n_train", "n_pos")):
+        """(n_k, n_k^+) of the training part of each site, in ``site_order``.
+        A count that is not in ``need`` is None when a site did not send it."""
+        out = {"n_train": [], "n_pos": []}
         for name in site_order:
             mp = self.model_parameters_history[name]
-            if mp.get("n_train") is None or mp.get("n_pos") is None:
-                raise ValueError(f"site {name!r} did not return n_train and n_pos")
-            n.append(int(mp["n_train"]))
-            n_pos.append(int(mp["n_pos"]))
-        return np.asarray(n, dtype=np.int64), np.asarray(n_pos, dtype=np.int64)
+            for key in out:
+                v = mp.get(key)
+                if v is None and key in need:
+                    raise ValueError(f"site {name!r} did not return {key}")
+                out[key].append(None if v is None else int(v))
+        conv = {k: (None if any(v is None for v in vals) else np.asarray(vals, dtype=np.int64))
+                for k, vals in out.items()}
+        return conv["n_train"], conv["n_pos"]
 
     def site_weights(self, site_order: Sequence[str], kind: str = "equal",
                      manual: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """Weights of the ladder (``equal``, ``size``, ``positives``) or the
-        normalized ``manual`` weights."""
+        normalized ``manual`` weights. ``size`` needs only n_k and
+        ``positives`` only n_k^+."""
         if kind not in WEIGHT_KINDS:
             raise ValueError(f"site_weights must be one of {WEIGHT_KINDS}, got {kind!r}")
         if kind == "manual":
             if manual is None:
                 raise ValueError("manual site weights need the weights")
             return {s: float(manual.get(s, 0.0)) for s in site_order}
-        n, n_pos = self.counts(site_order)
-        w = L.site_weights(n, n_pos, kind)
+        K = len(site_order)
+        if kind == "equal":
+            w = L.site_weights(np.ones(K), np.ones(K), "equal")
+        elif kind == "size":
+            n, _ = self.counts(site_order, need=("n_train",))
+            w = L.site_weights(n, np.zeros(K), "size")
+        else:
+            _, n_pos = self.counts(site_order, need=("n_pos",))
+            w = L.site_weights(np.ones(K), n_pos, "positives")
         return {s: float(v) for s, v in zip(site_order, w)}
 
     # ------------------------------------------------------------------
@@ -137,11 +149,14 @@ class ModelAggregator:
         have_counts = all(v is not None for v in n_train + n_pos)
         ladder = {
             "sites": list(order),
+            "sources": list(range(len(order))),
             "models": [self.model_parameters_history[s]["model"] for s in order],
             "weights": [float(v) for v in w],
             "n": [int(v) for v in n_train] if have_counts else None,
             "n_pos": [int(v) for v in n_pos] if have_counts else None,
             "pi": L.pooled_prevalence(n_train, n_pos) if have_counts else None,
+            "pi_k": ([float(v) for v in np.asarray(n_pos, dtype=np.int64)
+                      / np.asarray(n_train, dtype=np.int64)] if have_counts else None),
         }
 
         if kinds == {"xgb"}:

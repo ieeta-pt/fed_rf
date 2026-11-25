@@ -109,10 +109,16 @@ Key runtime deps:
 - xgboost>=2.0
 
 ## Quickstart
-Start two train datasites and one eval datasite (example ports/paths):
+Start two train datasites and one eval datasite (example ports/paths). Each
+data owner gives the new admin password and the password of the data
+scientist account (arguments or the environment variables
+`FEDRF_ADMIN_PASSWORD`, `FEDRF_DS_PASSWORD`; `FEDRF_DS_EMAIL` defaults to
+`fedlearning@rf.com`). Requests are approved by hand unless `auto_accept=True`,
+and the mock that the data scientist sees is synthetic unless a `mock_path` is
+given.
 
 ```python
-from package_pysyft.server import FLServer
+from fed_rf_mk.server import FLServer
 import threading
 
 servers = [
@@ -127,12 +133,14 @@ for s in servers:
 Train and evaluate with the client:
 
 ```python
-from package_pysyft.client import FLClient
+import os
+from fed_rf_mk.client import FLClient
 
+password = os.environ["FEDRF_DS_PASSWORD"]
 rf_client = FLClient()
-rf_client.add_train_client("silo1", "http://localhost:8080", "fedlearning@rf.com", "****", weight=0.6)
-rf_client.add_train_client("silo2", "http://localhost:8081", "fedlearning@rf.com", "****", weight=0.4)
-rf_client.add_eval_client("eval_silo", "http://localhost:8082", "fedlearning@rf.com", "****")
+rf_client.add_train_client("silo1", "http://localhost:8080", "fedlearning@rf.com", password)
+rf_client.add_train_client("silo2", "http://localhost:8081", "fedlearning@rf.com", password)
+rf_client.add_eval_client("eval_silo", "http://localhost:8082", "fedlearning@rf.com", password)
 
 dataParams = {
   "target": "cid",
@@ -148,13 +156,16 @@ modelParams = {
   "train_size": 0.8,
   "test_size": 0.8,
   "fl_epochs": 1,
+  "site_weights": "size",      # equal (default), size, positives, or manual (weights of add_train_client)
+  "release_level": "all",      # 0, 1, 2, 3, 3+1, 3+2 or all (see fed_rf_mk/release.py)
 }
 
 rf_client.set_data_params(dataParams)
 rf_client.set_model_params(modelParams)
 
-rf_client.run_model()
-results = rf_client.run_evaluate()
+rf_client.send_request()            # values of dataParams and modelParams are bound in each request
+rf_client.run_model()               # waits until each training request is approved
+results = rf_client.run_evaluate()  # sends the evaluation request, waits for its approval
 print(results)
 ```
 

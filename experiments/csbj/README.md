@@ -53,9 +53,14 @@ PySyft 0.9.5 needs numpy < 1.27, so it gets its own environment (versions in
     PYSYFT_EQUIV_OUT=$PWD/experiments/csbj/results/pysyft_equivalence.json \
         ../.venv_syft/bin/python -m pytest -q -s experiments/csbj/tests/test_pysyft_equivalence.py
 
-The second test starts local DataSites (`FLServer`, `auto_accept=True`) and
-checks that the PySyft path gives the predictions of the simulation (about one
-minute). It is skipped in the E1 environment. Results and the description of
+    PYSYFT_RELEASE_OUT=$PWD/experiments/csbj/results/pysyft_release.json \
+        ../.venv_syft/bin/python -m pytest -q -s experiments/csbj/tests/test_pysyft_release.py
+
+The equivalence test starts local DataSites (`FLServer`, `auto_accept=True`)
+and checks that the PySyft path gives the predictions of the simulation (about
+one minute). The release test approves every request by hand and checks what
+leaves each site for every `release_level` (about three minutes). Both are
+skipped in the E1 environment. Results and the description of
 what each site sends are in `results/pysyft_report.md`.
 
 ## One task

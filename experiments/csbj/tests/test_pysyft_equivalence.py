@@ -43,7 +43,11 @@ from fed_rf_mk.client import FLClient  # noqa: E402
 from fed_rf_mk.server import FLServer  # noqa: E402
 
 TARGET = "outcome"
-EMAIL, PASSWORD = "fedlearning@rf.com", "****"  # data scientist account of datasites.spawn_server
+import secrets  # noqa: E402
+
+EMAIL = "fedlearning@rf.com"
+PASSWORD = secrets.token_urlsafe(16)          # data scientist password, given to spawn_server
+ADMIN_PASSWORD = secrets.token_urlsafe(16)    # replaces the PySyft default admin password
 TOL = {"rf": 1e-12, "xgb": 1e-9}
 
 CONFIGS = [
@@ -178,12 +182,13 @@ def check_against_run_cell(ctx, part, K, learner, wname, sname, sim):
 # PySyft side
 # ----------------------------------------------------------------------------
 
-def start_servers(specs):
+def start_servers(specs, auto_accept=True):
     """specs: list of (name, csv path). Returns [(name, port, server)]."""
     out = []
     for name, path in specs:
         port = _free_port()
-        srv = FLServer(name, port=port, data_path=str(path), auto_accept=True)
+        srv = FLServer(name, port=port, data_path=str(path), auto_accept=auto_accept,
+                       admin_password=ADMIN_PASSWORD, ds_email=EMAIL, ds_password=PASSWORD)
         th = threading.Thread(target=srv.start, daemon=True)
         th.start()
         out.append((name, port, srv))
@@ -194,18 +199,6 @@ def start_servers(specs):
                 raise TimeoutError(f"DataSite {name} did not start")
             time.sleep(0.5)
     return out
-
-
-def wait_approved(datasites, timeout=120):
-    t0 = time.time()
-    for name, ds in datasites.items():
-        while True:
-            reqs = list(ds.requests)
-            if reqs and all(rq.status.value == 2 for rq in reqs):  # 2 == APPROVED
-                break
-            if time.time() - t0 > timeout:
-                raise TimeoutError(f"code request at {name} not approved")
-            time.sleep(1)
 
 
 def write_csv(X, y, features, path):
@@ -254,17 +247,16 @@ def pysyft_run(tmp, ctx, features, part, K, learner, wname, sname, sim):
             "site_seeds": {f"site{k}": sim["seeds"][k] for k in range(K)},
             "calibration": {"fraction": config.CAL_FRACTION, "random_state": 1000 * r + f},
             "return_predictions": True,
+            "release_level": "all",
         }
         if learner == "xgb":
             params.update(tree_method="hist", n_jobs=1)  # as config.XGB_PARAMS
         fl.set_model_params(params)
         fl.send_request()
-        wait_approved(fl.datasite_manager.get_train_datasites())
-        wait_approved(fl.datasite_manager.get_eval_datasites())
-        fl.run_model()
+        fl.run_model()        # waits for the approval of the training requests
         assert len(fl.model_aggregator.get_model_history()) == K
         lad = fl.model_params["ladder"]
-        res = fl.run_evaluate()
+        res = fl.run_evaluate()   # sends the evaluation request, waits for its approval
     finally:
         for _, _, srv in servers:
             srv.shutdown()
