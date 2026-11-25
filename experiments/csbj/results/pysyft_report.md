@@ -373,14 +373,14 @@ output is in `experiments/csbj/results/pysyft_equivalence.json`.
   * `numbers.json`, the tables and the figures were not regenerated and did not
     change.
 
-## 9. What the introduction and Section 2.7 say and the code does not do
+## 9. What Section 2.7 of the paper and Section S3 of the SI say and the code does not do
 
-* **Paper text.** It was not available here. The local `fedrf_csbj_paper.pdf`
-  and `fedrf_csbj_paper.zip` (21 November) are an older version without the
-  ladder. The points below are checked against the claims as described in
-  `INSTRUCOES_E1.md` 9.1 and 1b: data owners approve the code that runs on
-  their data, and the ladder, including what each level releases, is
-  implemented in fed_rf.
+* **Claims compared with the code.** Section 2.7 of the paper and Section S3
+  of the Supplementary Information claim two things:
+  * the data owners approve the code, and the values of the parameters, that
+    run on their data;
+  * the disclosure ladder, including what each level releases, is implemented
+    in fed_rf.
 * **Closed in this step.** Approval is manual by default, the mock is never
   the real data, approval covers the parameter values, there is a release per
   level, no password is written in the code, and the analysis switch reaches

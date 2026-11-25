@@ -79,7 +79,7 @@ def check_heart(out):
     path = out / "heart_2022_no_nans.csv"
     print("Heart")
     if not path.exists():
-        raise SystemExit(f"{path} is missing. Download it from Kaggle (see INSTRUCOES_E1.md, section 10).")
+        raise SystemExit(f"{path} is missing. Download it from Kaggle (see experiments/csbj/README.md, section Data).")
     df = pd.read_csv(path)
     check("rows", len(df), 246022)
     check("columns", df.shape[1], 40)

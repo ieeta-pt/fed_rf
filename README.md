@@ -281,7 +281,8 @@ keys are listed in `experiments/csbj/results/pysyft_report.md`.
 Every table, figure and number of the CSBJ paper comes from
 `experiments/csbj`. The full instructions are in `experiments/csbj/README.md`.
 
-1. **Environment.** Python 3.10 or newer, then
+1. **Environment.** Python 3.12 or newer (the lock file pins numpy 2.5.5, scipy
+   1.18.1 and xgboost 3.4.1, which need 3.12), then
    `pip install -r experiments/csbj/requirements_lock.txt`. The simulation does
    not need PySyft.
 2. **Data.**

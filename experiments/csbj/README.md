@@ -7,7 +7,7 @@ xgboost). It does not import PySyft.
 
 ## Environment
 
-Python 3.10 or newer, then
+Python 3.12 or newer (numpy 2.5.5, scipy 1.18.1 and xgboost 3.4.1 of the lock file need 3.12), then
 
     pip install -r experiments/csbj/requirements_lock.txt
 
@@ -22,6 +22,15 @@ Python 3.10 or newer, then
   The file has 5 exact duplicate rows, all kept.
 * Heart, Kaggle `kamilpytlak/personal-key-indicators-of-heart-disease`, file
   `heart_2022_no_nans.csv` (246,022 rows, 40 columns), downloaded by hand into the data folder.
+  Kaggle needs a login, so `fetch_data.py` does not download it. Open
+  https://www.kaggle.com/datasets/kamilpytlak/personal-key-indicators-of-heart-disease,
+  press Download, then extract the file into the data folder (`CSBJ_DATA`,
+  default `../data` next to the repository):
+
+      unzip -j "$(ls -t ~/Downloads/*.zip | head -1)" '*heart_2022_no_nans.csv' -d ../data/
+      wc -l ../data/heart_2022_no_nans.csv     # 246023 (header plus 246,022 rows)
+
+  `fetch_data.py` then checks the numbers of rows and columns and prints the positives.
   `HadAngina` is left out of the features, because angina or coronary heart disease is close
   to a restatement of the target (a heart attack is usually a manifestation of coronary heart
   disease). Heart keeps 38 features.
