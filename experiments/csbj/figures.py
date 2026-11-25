@@ -96,6 +96,28 @@ def plain_log_x(ax, decades=None):
     ax.xaxis.set_minor_formatter(NullFormatter())
 
 
+def floor_at_zero(ax, values, axis="y"):
+    """Start the axis at zero when nothing drawn goes clearly below zero.
+
+    values are every value drawn on the axis (means and interval limits). When
+    the minimum is not more negative than 1% of their range, the lower limit is
+    set to min(0, minimum) with no margin below and the upper limit keeps the
+    autoscale. Returns True when the limit was set.
+    """
+    v = np.concatenate([np.ravel(np.asarray(x, dtype=float)) for x in values] or [np.empty(0)])
+    v = v[np.isfinite(v)]
+    if not len(v):
+        return False
+    lo, hi = v.min(), v.max()
+    if lo < -0.01 * (hi - lo):
+        return False
+    if axis == "y":
+        ax.set_ylim(bottom=min(0.0, lo), top=ax.get_ylim()[1])
+    else:
+        ax.set_xlim(left=min(0.0, lo), right=ax.get_xlim()[1])
+    return True
+
+
 def _datasets(df):
     return [d for d in ("aids", "diabetic", "heart", "synthetic") if d in set(df.dataset)]
 
@@ -117,15 +139,18 @@ def fig_F1(res, out, learner, partition):
             ax = axes[i, j]
             ax.axhline(0, color=STYLE["m0"][0], lw=1)
             g = p[(p.dataset == ds) & (p.metric == metric)]
+            drawn = []
             for lv in ("m1", "m2", "m30", "m31", "m32", "mc"):
                 h = g[g.level == lv].sort_values("K")
                 if not len(h):
                     continue
                 c, ls, _ = STYLE[lv]
                 y, lo, hi = sign * h["mean"], sign * h.lo, sign * h.hi
-                ax.plot(h.K, y, color=c, ls=ls)
+                ax.plot(h.K, y, color=c, ls=ls, clip_on=False, zorder=3)
+                drawn += [y, lo, hi]
                 ax.fill_between(h.K, np.minimum(lo, hi), np.maximum(lo, hi), color=c, alpha=0.12, lw=0)
             ax.set_xticks(list(config.K_LIST))
+            floor_at_zero(ax, drawn)
             if i == 1:
                 ax.set_xlabel("Number of sites K")
             if j == 0:
@@ -141,6 +166,7 @@ def fig_F1(res, out, learner, partition):
 
 
 def _share_panel(ax, t, rows, level, groups, group_style, offsets):
+    drawn = []
     for gi, gname in enumerate(groups):
         color, marker, _ = group_style[gname]
         for ri, (ds, lr) in enumerate(rows):
@@ -150,10 +176,12 @@ def _share_panel(ax, t, rows, level, groups, group_style, offsets):
             q = q.iloc[0]
             y = ri + offsets[gi]
             ax.errorbar(q.r, y, xerr=[[q.r - q.r_lo], [q.r_hi - q.r]], fmt=marker, color=color,
-                        ms=3, elinewidth=0.8, capsize=0)
+                        ms=3, elinewidth=0.8, capsize=0, clip_on=False)
+            drawn += [q.r, q.r_lo, q.r_hi]
     ax.axvline(0, color="#999999", lw=0.6)
     ax.axvline(1, color="#999999", lw=0.6, ls=":")
     ax.set_xticks([0, 0.5, 1])
+    floor_at_zero(ax, drawn, axis="x")
     ax.set_yticks(range(len(rows)))
     ax.set_ylim(len(rows) - 0.5, -0.5)
 
@@ -182,6 +210,7 @@ def fig_F2(res, out):
 def fig_F3(res, out):
     t = pd.read_csv(res / "T3_auroc_gain.csv")
     fig, axes = plt.subplots(1, 2, figsize=(TWO_COL, 2.6), sharey=True)
+    drawn = []
     for k, (ax, lr) in enumerate(zip(axes, ("rf", "xgb"))):
         g = t[t.learner == lr]
         for ds in _datasets(g):
@@ -192,7 +221,8 @@ def fig_F3(res, out):
                 c = PART_STYLE[part][0]
                 ax.errorbar(h.n_over_K, h["mean"], yerr=[h["mean"] - h.lo, h.hi - h["mean"]],
                             fmt=DS_MARKER[ds], color=c, ms=3, elinewidth=0.6, capsize=0,
-                            mfc="none" if part == "equal" else c)
+                            mfc="none" if part == "equal" else c, clip_on=False)
+                drawn += [h["mean"], h.lo, h.hi]
         plain_log_x(ax)
         ax.axhline(0, color="#999999", lw=0.6)
         ax.set_xlabel("Mean site size n/K (records, log scale)")
@@ -200,6 +230,7 @@ def fig_F3(res, out):
             ax.set_ylabel("AUROC gain of level 3 over level 0")
         ax.text(0.5, 1.02, LR_LABEL[lr], transform=ax.transAxes, ha="center", va="bottom")
         letter(ax, k)
+    floor_at_zero(axes[0], drawn)
     dsh = [Line2D([], [], color="#555555", marker=DS_MARKER[d], ls="", ms=3, label=DS_LABEL[d])
            for d in _datasets(t)]
     ph = [Line2D([], [], color=c, marker="o", ls="", ms=3, label=l, mfc="none" if p == "equal" else c)
