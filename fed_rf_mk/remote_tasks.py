@@ -311,7 +311,130 @@ def evaluate_global_model(data, dataParams: dict, modelParams: dict) -> dict:
 
         return calibrate_fn, summary
 
+    def _ladder_evaluate(data) -> dict:
+        """Every level of the disclosure ladder at this deployment site.
+
+        Uses every record of this site. A stratified part (``calibration``:
+        ``n_cal`` records, or ``fraction`` of the site, default 0.2, with
+        ``random_state``) is used only to fit level 2, and the metrics are
+        computed on the rest (the test part). Labels never leave the site.
+
+        Arms: src<k>_L0, src<k>_L1, src<k>_L2 for every source site k, and
+        fed_L0, fed_L1, fed_L1g, fed_L2 for the federated model.
+        """
+        try:
+            from fed_rf_mk import ladder as L
+        except ImportError:
+            import ladder as L
+        from sklearn.metrics import brier_score_loss
+        import warnings
+
+        lad = modelParams["ladder"]
+        d = data.dropna(subset=[dataParams["target"]])
+        y = np.asarray(d[dataParams["target"]])
+        if not set(np.unique(y).tolist()) <= {0, 1}:
+            raise ValueError("the ladder needs a 0/1 target")
+        y = y.astype(int)
+        X = d.drop(dataParams["ignored_columns"], axis=1).astype(np.float64)
+
+        cal_cfg = modelParams.get("calibration") or {}
+        n_cal = cal_cfg.get("n_cal")
+        size = int(n_cal) if n_cal is not None else float(cal_cfg.get("fraction", 0.2))
+        cal, test = train_test_split(
+            np.arange(y.size), train_size=size, stratify=y,
+            random_state=cal_cfg.get("random_state", 42),
+        )
+        cal, test = np.sort(cal), np.sort(test)
+
+        if lad.get("pi") is None:
+            raise ValueError("level 1 needs the counts n_k and n_k^+ of every site")
+        pi = float(lad["pi"])
+        n_k = np.asarray(lad["n"], dtype=np.int64)
+        pos_k = np.asarray(lad["n_pos"], dtype=np.int64)
+        pi_k = pos_k / n_k
+        w = np.asarray(lad["weights"], dtype=np.float64)
+        models = [pickle.loads(b) for b in lad["models"]]
+        kind = lad["model_type"]
+
+        arms = {}  # name -> dict(p, z, a, b)
+
+        def level2(name, z_in):
+            a, b = L.fit_recalibration(z_in[cal], y[cal])
+            arms[name] = {"p": L.apply_recalibration(z_in, a, b), "z": a * z_in + b,
+                          "a": float(a), "b": float(b)}
+
+        if kind == "rf":
+            tree_probs = [L.rf_tree_probs(m.estimators_, X.to_numpy()) for m in models]
+            for k, m in enumerate(models):
+                T_k = len(m.estimators_)
+                p0 = tree_probs[k].mean(axis=0, dtype=np.float64)
+                p1 = L.shift_prob(p0, pi, pi_k[k])
+                arms[f"src{k}_L0"] = {"p": p0, "z": L.logit(L.clip_prob(p0, T_k))}
+                arms[f"src{k}_L1"] = {"p": p1, "z": L.logit(L.clip_prob(p1, T_k))}
+                level2(f"src{k}_L2", L.logit(L.clip_prob(p0, T_k)))
+            sel = [np.asarray(s, dtype=np.int64) for s in lad["selections"]]
+            T = int(sum(s.size for s in sel))
+            p0 = L.rf_federated(tree_probs, sel)
+            p1 = L.rf_federated_shift(tree_probs, sel, pi, pi_k)
+            p1g = L.rf_federated_global_shift(tree_probs, sel, pi, pi_k)
+            arms["fed_L0"] = {"p": p0, "z": L.logit(L.clip_prob(p0, T))}
+            arms["fed_L1"] = {"p": p1, "z": L.logit(L.clip_prob(p1, T))}
+            arms["fed_L1g"] = {"p": p1g, "z": L.logit(L.clip_prob(p1g, T))}
+            level2("fed_L2", L.logit(L.clip_prob(p0, T)))
+        elif kind == "xgb":
+            Z = np.stack([np.asarray(m.predict(X, output_margin=True), dtype=np.float64)
+                          for m in models])
+            for k in range(len(models)):
+                z0 = Z[k]
+                z1 = L.shift_logit(z0, pi, pi_k[k])
+                arms[f"src{k}_L0"] = {"p": L.sigmoid(z0), "z": z0}
+                arms[f"src{k}_L1"] = {"p": L.sigmoid(z1), "z": z1}
+                level2(f"src{k}_L2", z0)
+            z0 = L.xgb_federated(Z, w)
+            z1 = L.xgb_federated_shift(Z, w, pi, pi_k)
+            z1g = L.xgb_federated_global_shift(Z, w, pi, pi_k)
+            arms["fed_L0"] = {"p": L.sigmoid(z0), "z": z0}
+            arms["fed_L1"] = {"p": L.sigmoid(z1), "z": z1}
+            arms["fed_L1g"] = {"p": L.sigmoid(z1g), "z": z1g}
+            level2("fed_L2", z0)
+        else:
+            raise ValueError(f"unknown model type {kind!r}")
+
+        yt = y[test]
+        metrics = {}
+        for name, arm in arms.items():
+            p = arm["p"][test]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                row = {
+                    "auroc": float(roc_auc_score(yt, p)),
+                    "auprc": float(average_precision_score(yt, p)),
+                    "brier": float(brier_score_loss(yt, p)),
+                    "mcc_pi": float(mcc(yt, (p > pi).astype(int))),
+                    "mcc_05": float(mcc(yt, (p > 0.5).astype(int))),
+                }
+            if "a" in arm:
+                row.update(rec_a=arm["a"], rec_b=arm["b"])
+            metrics[name] = row
+
+        out = {"ladder": {"model_type": kind, "pi": pi, "n_cal": int(cal.size),
+                          "n_test": int(test.size), "weights": [float(v) for v in w],
+                          "arms": metrics}}
+        # Per record outputs on the test part, off by default (used by the
+        # equivalence test). They carry no labels.
+        if modelParams.get("return_predictions", False):
+            out["predictions"] = {
+                "test_positions": [int(i) for i in test],
+                "arms": {name: {"p": [float(v) for v in arm["p"][test]],
+                                "z": [float(v) for v in arm["z"][test]]}
+                         for name, arm in arms.items()},
+            }
+        return out
+
     try:
+        if modelParams.get("ladder"):
+            return _ladder_evaluate(data)
+
         X_test, y_test = preprocess(data)
 
         # XGBoost ensemble path (evaluation-time ensembling)
@@ -461,7 +584,7 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
 
         # Separate features and target variable
         y = data[dataParams["target"]]
-        X = data.drop(dataParams["ignored_columns"], axis=1)
+        X = data.drop(dataParams["ignored_columns"], axis=1).astype(np.float64)
 
         # # Align with evaluator: replace inf/-inf, coerce to float64, drop rows with NaNs
         # X = X.replace([np.inf, -np.inf], np.nan).astype(np.float64)
@@ -469,9 +592,14 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
         # X = X[mask]
         # y = y[mask]
 
-        # Step 2: Split the data into training and testing sets
+        # Step 2: Split the data into training and testing sets. With
+        # train_size >= 1 every record of the site is used for training and
+        # there is no local test part.
+        train_size = modelParams.get("train_size", 1.0)
+        if train_size is None or float(train_size) >= 1.0:
+            return (X, y), None
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, train_size=modelParams["train_size"], stratify=y, random_state=42
+            X, y, train_size=train_size, stratify=y, random_state=42
         )
 
         return (X_train, y_train), (X_test, y_test)
@@ -535,7 +663,10 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
             modelParams.get("allow_analysis", analysis_cfg.get("enabled", False))
         )
         # Silo-side policy switch (datasites module policy)
-        from datasites import is_analysis_allowed as _site_policy_allows
+        try:
+            from fed_rf_mk.datasites import is_analysis_allowed as _site_policy_allows
+        except ImportError:
+            from datasites import is_analysis_allowed as _site_policy_allows
         # Effective permission requires both the request and the silo policy to allow it
         do_analysis = allow_analysis_req and _site_policy_allows()
 
@@ -579,7 +710,7 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
                 # Allow optional RF hyperparameters via modelParams; sensible defaults provided
                 clf = RandomForestClassifier(
                     n_estimators=modelParams["n_base_estimators"],
-                    random_state=42,
+                    random_state=modelParams.get("random_state", 42),
                     warm_start=True,
                     # criterion=modelParams.get("criterion", "gini"),
                     # max_depth=modelParams.get("max_depth", None),
@@ -605,8 +736,8 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
 
                 clf = XGBClassifier(
                     n_estimators=modelParams["n_base_estimators"],
-                    random_state=42,
-                    n_jobs=-1,
+                    random_state=modelParams.get("random_state", 42),
+                    n_jobs=modelParams.get("n_jobs", -1),
                     # Learning parameters
                     learning_rate=modelParams.get("learning_rate", 0.3),  # eta
                     max_depth=modelParams.get("max_depth", 6),
@@ -642,6 +773,24 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
 
         # Train (handles both RF and XGB; for XGB will continue if prev_booster is provided)
         clf = train(clf, training_data, xgb_prev_booster=prev_booster)
+
+        # Counts n_k and n_k^+ of the training part (level 1 of the ladder) and,
+        # for out of bag tree sampling, the score of each tree. Nothing else
+        # about the data is returned for the ladder.
+        y_tr = np.asarray(training_data[1])
+        n_train = int(y_tr.shape[0])
+        n_pos = None
+        classes = list(getattr(clf, "classes_", []))
+        if len(classes) == 2:
+            n_pos = int(np.sum(y_tr == classes[1]))
+        oob_scores = None
+        if model_type == MODEL_RF and modelParams.get("tree_sampling", "uniform") == "oob":
+            try:
+                from fed_rf_mk import ladder as _ladder
+            except ImportError:
+                import ladder as _ladder
+            oob_scores = [float(v) for v in _ladder.tree_oob_scores(
+                clf, training_data[0].to_numpy(dtype=np.float64), y_tr)]
 
         shap_data = None
         pfi_data = None
@@ -680,7 +829,7 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
                     "sample_size": sample_size,
                 }
 
-            if do_pfi:
+            if do_pfi and test_data is not None:
                 print("Calculating Permutation Feature Importance...")
                 # Use the test set for PFI calculation to avoid overfitting
                 X_test, y_test = test_data
@@ -726,7 +875,12 @@ def ml_experiment(data, dataParams: dict, modelParams: dict) -> dict:
             "n_incremental_estimators": modelParams["n_incremental_estimators"],
             "train_size": modelParams["train_size"],
             "sample_size": len(training_data[0]),
-            "test_size": modelParams["test_size"],
+            "test_size": modelParams.get("test_size"),
+            # Level 1 of the ladder: counts of the training part
+            "n_train": n_train,
+            "n_pos": n_pos,
+            # Out of bag score of each tree, only when out of bag sampling is asked for
+            "oob_scores": oob_scores,
             # Analysis meta
             "analysis_status": (
                 "enabled"

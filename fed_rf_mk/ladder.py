@@ -26,7 +26,7 @@ from scipy.special import expit, logit as _logit
 __all__ = [
     "logit", "sigmoid", "odds", "pooled_prevalence", "site_weights",
     "shift_prob", "shift_logit", "clip_prob", "fit_recalibration",
-    "apply_recalibration", "allocate_trees", "select_trees", "rf_federated",
+    "apply_recalibration", "allocate_trees", "select_trees", "rf_tree_probs", "rf_federated",
     "rf_federated_shift", "rf_federated_global_shift", "xgb_federated",
     "xgb_federated_shift", "xgb_federated_global_shift", "tree_oob_scores",
     "single_record_leaf_fraction", "xgb_single_record_leaf_fraction",
@@ -235,6 +235,19 @@ def _unit(p):
     point (t = (2, 4, 3, 1)), which would push a probability of 1 above 1.
     Values already in [0, 1] are unchanged."""
     return np.clip(p, 0.0, 1.0)
+
+
+def rf_tree_probs(estimators, X, dtype=np.float32):
+    """P(y=1) of every tree on X, shape (T, n), for ``tree_probs`` above.
+
+    X is cast to C contiguous float32 (what scikit-learn trees use), and the
+    result is stored in ``dtype``. The simulation of the paper
+    (experiments/csbj/run_task.py, ``fit_rf``) stores float32, so float32 is
+    the default here too.
+    """
+    X32 = np.ascontiguousarray(X, dtype=np.float32)
+    return np.stack([t.predict_proba(X32, check_input=False)[:, 1]
+                     for t in estimators]).astype(dtype)
 
 
 def rf_federated(tree_probs, selections):

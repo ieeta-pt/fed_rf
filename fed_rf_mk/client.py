@@ -42,6 +42,17 @@ class ModelParamsDict(TypedDict):
     ensemble_members: Optional[List[Tuple[bytes, float]]]
 
 
+# Options of the disclosure ladder in model_params, with the defaults of the paper.
+LADDER_DEFAULTS = {
+    "site_weights": "equal",      # equal, size, positives (ladder.site_weights) or manual
+    "tree_sampling": "uniform",   # uniform or oob (out of bag score of each tree)
+    "seed": 42,                   # int or list of ints, numpy generator of the tree selection
+    "site_seeds": None,           # optional {site name: random_state of its local model}
+    "calibration": {"n_cal": None, "fraction": 0.2, "random_state": 42},  # level 2
+    "return_predictions": False,  # per record outputs of the test part of the deployment site
+}
+
+
 class FLClient:
     """
     Refactored Federated Learning Client with separated concerns.
@@ -84,9 +95,14 @@ class FLClient:
         return f"Data parameters set: {data_params}"
 
     def set_model_params(self, model_params: dict) -> str:
-        """Set model parameters."""
-        self.model_params = model_params
-        return f"Model parameters set: {model_params}"
+        """Set model parameters. Ladder options missing from ``model_params``
+        take the defaults of ``LADDER_DEFAULTS``."""
+        params = {k: (dict(v) if isinstance(v, dict) else v) for k, v in LADDER_DEFAULTS.items()}
+        cal = {**params["calibration"], **(model_params.get("calibration") or {})}
+        params.update(model_params)
+        params["calibration"] = cal
+        self.model_params = params
+        return f"Model parameters set: {params}"
 
     def get_data_params(self) -> dict:
         """Get data parameters."""
@@ -156,13 +172,17 @@ class FLClient:
         logger.info("Launching first-epoch training on all clients in parallel…")
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(datasites)) as executor:
             futures: dict[concurrent.futures.Future, str] = {}
+            site_seeds = self.model_params.get("site_seeds") or {}
             for name, datasite in datasites.items():
                 data_asset = datasite.datasets[0].assets[0]
+                mp = {**self.model_params, "model": None}
+                if name in site_seeds:
+                    mp["random_state"] = int(site_seeds[name])
                 futures[executor.submit(
-                    lambda ds, da, dp: ds.code.ml_experiment(
-                        data=da, dataParams=dp, modelParams={**self.model_params, "model": None}
+                    lambda ds, da, dp, mp: ds.code.ml_experiment(
+                        data=da, dataParams=dp, modelParams=mp
                     ).get_from(ds),
-                    datasite, data_asset, self.data_params,
+                    datasite, data_asset, self.data_params, mp,
                 )] = name
 
             # Collect results
@@ -170,6 +190,8 @@ class FLClient:
                 name = futures[future]
                 try:
                     mp = future.result()
+                    if not isinstance(mp, dict) or "error" in mp or not mp.get("model"):
+                        raise RuntimeError(mp.get("error") if isinstance(mp, dict) else mp)
                     self.model_aggregator.store_model_parameters(name, mp)
 
                     # Store SHAP values
@@ -185,18 +207,37 @@ class FLClient:
                 except Exception as e:
                     logger.warning("%s failed: %s", name, e)
 
-        # Normalize weights and average feature importance values
-        successful_silos = list(self.model_aggregator.get_model_history().keys())
-        normalized_weights = self.weight_manager.normalize_weights(successful_silos)
+        # Sites in the order they were added (not the order in which they
+        # finished), so that the seeded tree selection is reproducible.
+        history = self.model_aggregator.get_model_history()
+        successful_silos = [name for name in datasites if name in history]
+        manual = None
+        if self.model_params.get("site_weights", "equal") == "manual":
+            manual = self.weight_manager.normalize_weights(successful_silos)
 
-        # Average feature importance values
-        self.shap_handler.average_shap_values(normalized_weights)
-        self.pfi_handler.average_pfi_values(normalized_weights)
+        # Merge models with the rule of the ladder (site weights, largest
+        # remainder allocation, seeded tree selection)
+        merged_model = self.model_aggregator.combine(
+            successful_silos,
+            site_weights=self.model_params.get("site_weights", "equal"),
+            sampling=self.model_params.get("tree_sampling", "uniform"),
+            seed=self.model_params.get("seed", 42),
+            manual_weights=manual,
+        )
+        weights = merged_model["weights"]
 
-        # Merge models
-        merged_model = self.model_aggregator.merge_estimators(normalized_weights)
+        # Average feature importance values with the same site weights
+        self.shap_handler.average_shap_values(weights)
+        self.pfi_handler.average_pfi_values(weights)
+
         self.model_params["model"] = merged_model["seed_model"]
         self.model_params["ensemble_members"] = merged_model.get("ensemble_members")
+        self.model_params["ladder"] = merged_model.get("ladder")
+        lad = merged_model.get("ladder") or {}
+        logger.info("Site weights (%s): %s", self.model_params.get("site_weights"), weights)
+        logger.info("Pooled prevalence: %s", lad.get("pi"))
+        if lad.get("t") is not None:
+            logger.info("Trees per site: %s", dict(zip(lad["sites"], lad["t"])))
 
         logger.info("SHAP values averaged across silos")
         logger.info("PFI values averaged across silos")

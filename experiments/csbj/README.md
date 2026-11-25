@@ -42,6 +42,22 @@ This writes `heart_encoded.npz` to the data folder and `heart_encoding.csv`
 
 `fed_rf_mk/tests/test_remote_tasks.py` needs PySyft and is not part of this setup.
 
+### PySyft path
+
+PySyft 0.9.5 needs numpy < 1.27, so it gets its own environment (versions in
+`requirements_pysyft_lock.txt`), next to the E1 one:
+
+    uv venv --python 3.12 ../.venv_syft
+    uv pip install --python ../.venv_syft/bin/python -r experiments/csbj/requirements_pysyft_lock.txt
+    (cd fed_rf_mk && ../../.venv_syft/bin/python -m pytest -q tests)
+    PYSYFT_EQUIV_OUT=$PWD/experiments/csbj/results/pysyft_equivalence.json \
+        ../.venv_syft/bin/python -m pytest -q -s experiments/csbj/tests/test_pysyft_equivalence.py
+
+The second test starts local DataSites (`FLServer`, `auto_accept=True`) and
+checks that the PySyft path gives the predictions of the simulation (about one
+minute). It is skipped in the E1 environment. Results and the description of
+what each site sends are in `results/pysyft_report.md`.
+
 ## One task
 
     RUNS=... PREDS=... python experiments/csbj/run_task.py --dataset aids --task-id 0
