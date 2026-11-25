@@ -12,7 +12,7 @@ Writes PDF and PNG (300 dpi, final printed size) into <results>/figures.
     S_E10                      r_1 and r_2 for Brier under shifted prevalence, dir0.5
     S_E12                      r_2 for Brier against n_cal, dir0.5
     S_calibration              calibration slope and intercept per level, dir0.5
-    S_reliability              reliability curves, r0 f0, K = 5, dir0.5
+    S_reliability              reliability curves, r0 f0, K = 5, dir0.5, bins with >= 10 rows
 """
 import argparse
 import sys
@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
@@ -47,6 +48,8 @@ PART_STYLE = {"equal": ("#56B4E9", "o", "Equal"), "dir0.5": ("#D55E00", "s", "Di
 DS_LABEL = {"aids": "AIDS", "diabetic": "Diabetic", "heart": "Heart", "synthetic": "Synthetic"}
 DS_MARKER = {"aids": "o", "diabetic": "s", "heart": "^", "synthetic": "D"}
 LR_LABEL = {"rf": "Random Forest", "xgb": "XGBoost"}
+LR_SHORT = {"rf": "RF", "xgb": "XGB"}
+MIN_BIN = 10  # reliability bins with fewer test rows are not drawn
 PARTS = ("equal", "dir0.5", "dir0.1")
 
 
@@ -70,6 +73,14 @@ def save(fig, out, name):
 def letter(ax, i):
     ax.text(-0.02, 1.02, "abcdefghijklmnop"[i], transform=ax.transAxes, fontweight="bold",
             ha="right", va="bottom")
+
+
+def plain_log_x(ax):
+    """Log x axis with plain numbers at 1, 2, 5 times powers of 10."""
+    ax.set_xscale("log")
+    ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
 
 
 def _datasets(df):
@@ -147,7 +158,7 @@ def fig_F2(res, out):
         _share_panel(ax, t, rows, lvl, PARTS, PART_STYLE, (-0.2, 0.0, 0.2))
         ax.set_xlabel(f"$r_{lvl}$, Brier score")
         letter(ax, k)
-    axes[0].set_yticklabels([f"{DS_LABEL[d]} {lr.upper() if lr == 'rf' else 'XGB'}" for d, lr in rows])
+    axes[0].set_yticklabels([f"{DS_LABEL[d]} {LR_SHORT[lr]}" for d, lr in rows])
     handles = [Line2D([], [], color=c, marker=m, ls="", ms=3, label=l) for c, m, l in PART_STYLE.values()]
     fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False)
     fig.tight_layout(rect=(0, 0.1, 1, 1), w_pad=0.8)
@@ -168,7 +179,7 @@ def fig_F3(res, out):
                 ax.errorbar(h.n_over_K, h["mean"], yerr=[h["mean"] - h.lo, h.hi - h["mean"]],
                             fmt=DS_MARKER[ds], color=c, ms=3, elinewidth=0.6, capsize=0,
                             mfc="none" if part == "equal" else c)
-        ax.set_xscale("log")
+        plain_log_x(ax)
         ax.axhline(0, color="#999999", lw=0.6)
         ax.set_xlabel("Mean site size n/K (records, log scale)")
         if k == 0:
@@ -177,7 +188,8 @@ def fig_F3(res, out):
         letter(ax, k)
     dsh = [Line2D([], [], color="#555555", marker=DS_MARKER[d], ls="", ms=3, label=DS_LABEL[d])
            for d in _datasets(t)]
-    ph = [Line2D([], [], color=c, marker="o", ls="", ms=3, label=l) for c, _, l in PART_STYLE.values()]
+    ph = [Line2D([], [], color=c, marker="o", ls="", ms=3, label=l, mfc="none" if p == "equal" else c)
+          for p, (c, _, l) in PART_STYLE.items()]
     fig.legend(handles=dsh + ph, loc="lower center", ncol=len(dsh) + len(ph), frameon=False)
     fig.tight_layout(rect=(0, 0.08, 1, 1), w_pad=1.0)
     save(fig, out, "F3_gain_vs_site_size")
@@ -236,7 +248,7 @@ def fig_E5(res, out, partition="dir0.5"):
         ax.set_xlabel(lab)
         letter(ax, k)
     axes[0].set_yticks(range(len(keys)))
-    axes[0].set_yticklabels([f"{DS_LABEL[q.dataset]} {q.learner}, {q.weights}"
+    axes[0].set_yticklabels([f"{DS_LABEL[q.dataset]} {LR_SHORT[q.learner]}, {q.weights}"
                              + ("" if q.sampling == "na" else f", {q.sampling}")
                              for _, q in keys.iterrows()])
     axes[0].set_ylim(len(keys) - 0.5, -0.5)
@@ -250,14 +262,14 @@ def fig_E10(res, out, partition="dir0.5"):
     rows = _rows(t)
     if not rows:
         return
-    st = {"shift_half": ("#0072B2", "v", "Prevalence odds halved"),
-          "shift_double": ("#D55E00", "^", "Prevalence odds doubled")}
+    st = {"shift_half": ("#000000", "v", "Prevalence odds halved"),
+          "shift_double": ("#000000", "^", "Prevalence odds doubled")}
     fig, axes = plt.subplots(1, 2, figsize=(ONE_COL, 0.35 * len(rows) + 1.0), sharey=True)
     for k, (ax, lvl) in enumerate(zip(axes, (1, 2))):
         _share_panel(ax, t, rows, lvl, list(st), st, (-0.12, 0.12))
         ax.set_xlabel(f"$r_{lvl}$, Brier score")
         letter(ax, k)
-    axes[0].set_yticklabels([f"{DS_LABEL[d]} {lr}" for d, lr in rows])
+    axes[0].set_yticklabels([f"{DS_LABEL[d]} {LR_SHORT[lr]}" for d, lr in rows])
     handles = [Line2D([], [], color=c, marker=m, ls="", ms=3, label=l) for c, m, l in st.values()]
     fig.legend(handles=handles, loc="lower center", ncol=1, frameon=False)
     fig.tight_layout(rect=(0, 0.14, 1, 1), w_pad=0.8)
@@ -282,7 +294,7 @@ def fig_E12(res, out, partition="dir0.5"):
                         yerr=[h.r - h.r_lo, h.r_hi - h.r], fmt=m + ("-" if lr == "rf" else "--"),
                         color=c, ms=3, elinewidth=0.6, capsize=0,
                         mfc=c if lr == "rf" else "white", label=LR_LABEL[lr])
-        ax.set_xscale("log")
+        plain_log_x(ax)
         ax.axhline(1, color="#999999", lw=0.6, ls=":")
         ax.axhline(0, color="#999999", lw=0.6)
         ax.set_xlabel("Labeled records for level 2, $n_{cal}$")
@@ -322,7 +334,7 @@ def fig_calibration(res, out, partition="dir0.5"):
         ax.set_xlabel(lab)
         letter(ax, k)
     axes[0].set_yticks(range(len(rows)))
-    axes[0].set_yticklabels([f"{DS_LABEL[d]} {lr}" for d, lr in rows])
+    axes[0].set_yticklabels([f"{DS_LABEL[d]} {LR_SHORT[lr]}" for d, lr in rows])
     axes[0].set_ylim(len(rows) - 0.5, -0.5)
     handles = []
     for lv in levels:
@@ -339,10 +351,11 @@ def fig_reliability(res, out):
     if not p.exists() or p.stat().st_size < 10:
         return
     t = pd.read_csv(p)
+    t = t[t.n >= MIN_BIN]
     dss = _datasets(t)
     if not dss:
         return
-    fig, axes = plt.subplots(2, len(dss), figsize=(TWO_COL, 4.2), squeeze=False)
+    fig, axes = plt.subplots(2, len(dss), figsize=(TWO_COL, 4.4), squeeze=False)
     for j, ds in enumerate(dss):
         for i, lr in enumerate(("rf", "xgb")):
             ax = axes[i, j]
@@ -354,7 +367,6 @@ def fig_reliability(res, out):
                     ax.plot(h.p_mean, h.y_mean, color=c, ls=ls, marker="o", ms=1.5)
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-            ax.set_aspect("equal")
             if i == 1:
                 ax.set_xlabel("Mean predicted probability")
             if j == 0:

@@ -103,9 +103,12 @@ run folders, loads `python/3.12.12` and activates `$P/venv`.
     pip install -r experiments/csbj/requirements_lock.txt
     sbatch --nice=100 experiments/csbj/slurm/tests.sbatch             # tests and Heart encoding
     bash experiments/csbj/slurm/submit.sh --timing                     # task 0 of each dataset
-    bash experiments/csbj/slurm/submit.sh --r-rep 4                    # main grid
+    bash experiments/csbj/slurm/submit.sh --r-rep 10                   # main grid, 50 draws
     bash experiments/csbj/slurm/submit.sh --r-rep 4 --hp regularized --after <last job id>
-    python experiments/csbj/slurm/status.py --r-rep 4 [--hp regularized]
+    python experiments/csbj/slurm/status.py --r-rep 10                 # or --r-rep 4 --hp regularized
+    sbatch --nice=100 --export=ALL,DATASETS="aids diabetic heart" experiments/csbj/slurm/report.sbatch
+
+`submit.sh --datasets heart` resubmits one dataset only.
 
 `submit.sh` chains one array per dataset (`%1` inside each array, `afterany`
 between arrays, `--nice=100`), so at most one task of the project runs at any
@@ -118,5 +121,27 @@ time. Tasks are requeue safe: finished cells are skipped.
 weights, uniform sampling, eval `test`, full calibration part, plus `fed_L1g`)
 and writes to `RUNS_REGULARIZED`. `analyze.py compare-hp` puts the shares, the
 AUROC gain of level 3, the centralized models and the single record leaf
-fractions of the two configurations side by side. With `min_samples_leaf=5`
-scikit-learn counts distinct bootstrap rows, so that fraction is 0 by construction.
+fractions of the two configurations side by side, on the draws the two grids
+share (r = 0..3, 20 draws). With `min_samples_leaf=5` scikit-learn counts distinct
+bootstrap rows, so every leaf holds at least 5 distinct rows, with one exception:
+a tree whose bootstrap sample has fewer than 10 distinct rows cannot be split and
+is a single leaf holding all of them. This happens at sites with 10 to 12 records
+(the 5 + 5 minimum of the Dirichlet partitions), where a bootstrap sample of 10
+draws can hold only 4 distinct rows.
+
+## Tables, numbers and figures
+
+    python experiments/csbj/analyze.py report --datasets aids diabetic heart --r-rep 10 --r-rep-reg 4
+    python experiments/csbj/figures.py
+
+`report` checks that every expected output is present with no error file, then
+writes into `CSBJ_RESULTS` the tables T1 to T3 and the supplementary tables (CSV
+and booktabs LaTeX), `numbers.json` and `numbers.md` (every value with its
+interval and one line on how it was computed). `figures.py` reads only those CSV
+files and writes PDF and PNG figures into `CSBJ_RESULTS/figures`. The logistic
+regression learner (E13) is run but not reported. On Pleiades, `slurm/report.sbatch`
+runs both (about 40 minutes for AIDS and Diabetic, mostly reading the run files), and only `$P/results` is
+copied back:
+
+    rsync -av pleiades:/data/home/jorge.miguel.ferreira.silva/storage/fedrf_csbj/results/ "$CSBJ/results/"
+

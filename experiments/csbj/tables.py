@@ -602,6 +602,17 @@ def build_numbers(R, t1, t2, t3, perK, e5, l1g, e9, e10, e11, e12, rfxgb, calib,
         N.add(f"design.n_draws.{ds}", d["n_draws"], "Distinct (rep, fold) draws in the main grid.")
         N.add(f"design.n_repetitions.{ds}", d["n_reps"], "Repetitions of 5 fold CV in the main grid.")
     N.add("design.n_folds", config.N_FOLDS, "Folds per repetition.")
+    for name, d, how in (("design", meta["draws"], "main grid"),
+                         ("design.regularized", meta.get("draws_reg", {}), "regularized grid, common draws")):
+        if not d:
+            continue
+        for k in ("n_draws", "n_reps"):
+            vals = {x[k] for x in d.values()}
+            key = f"{name}.{'n_draws' if k == 'n_draws' else 'n_repetitions'}"
+            if len(vals) == 1:
+                N.add(key, vals.pop(), f"Same for every dataset ({how}).")
+            else:
+                N.add(key, None, f"Per dataset ({how}).", reason="differs between datasets")
     for ds, d in meta.get("draws_reg", {}).items():
         N.add(f"design.regularized.n_draws.{ds}", d["n_draws"],
               "Draws of the regularized grid shared with the main grid (common draws).")
