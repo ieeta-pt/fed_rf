@@ -1,0 +1,43 @@
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{One record} & \multicolumn{2}{c}{Fewer than 5 records} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+Forests & Default & Regularized & Default & Regularized \\
+\midrule
+\multicolumn{5}{@{}l}{\textit{AIDS, Random Forest}} \\
+Sites, Equal & 0.505 & 0.000 & 0.839 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.497 & 0.000 & 0.814 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.488 & 0.000 & 0.795 & 0.000 \\
+Centralized & 0.512 & 0.000 & 0.842 & 0.000 \\
+\addlinespace
+\multicolumn{5}{@{}l}{\textit{AIDS, XGBoost}} \\
+Sites, Equal & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Centralized & 0.000 & 0.000 & 0.000 & 0.000 \\
+\addlinespace
+\multicolumn{5}{@{}l}{\textit{Diabetic, Random Forest}} \\
+Sites, Equal & 0.414 & 0.000 & 0.776 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.426 & 0.000 & 0.765 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.426 & 0.000 & 0.755 & 0.001 \\
+Centralized & 0.422 & 0.000 & 0.779 & 0.000 \\
+\addlinespace
+\multicolumn{5}{@{}l}{\textit{Diabetic, XGBoost}} \\
+Sites, Equal & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Centralized & 0.000 & 0.000 & 0.000 & 0.000 \\
+\addlinespace
+\multicolumn{5}{@{}l}{\textit{Heart, Random Forest}} \\
+Sites, Equal & 0.464 & 0.000 & 0.739 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.464 & 0.000 & 0.746 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.464 & 0.000 & 0.744 & 0.000 \\
+Centralized & 0.470 & 0.000 & 0.744 & 0.000 \\
+\addlinespace
+\multicolumn{5}{@{}l}{\textit{Heart, XGBoost}} \\
+Sites, Equal & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.5$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Sites, Dirichlet $\alpha=0.1$ & 0.000 & 0.000 & 0.000 & 0.000 \\
+Centralized & 0.000 & 0.000 & 0.000 & 0.000 \\
+\bottomrule
+\end{tabular}

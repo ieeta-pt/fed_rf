@@ -10,7 +10,7 @@ Writes PDF and PNG (300 dpi, final printed size) into <results>/figures.
     S_prevalence               pi_k of every site, r0 f0, K = 10
     S_E5                       weights and sampling against the default, fed_L0, dir0.5
     S_E10                      r_1 and r_2 for Brier under shifted prevalence, dir0.5
-    S_E12                      r_2 for Brier against n_cal, dir0.5
+    S_E12                      r_2 for Brier against n_cal, dir0.5, ticks at the n_cal drawn
     S_calibration              calibration slope and intercept per level, dir0.5
     S_reliability              reliability curves, r0 f0, K = 5, dir0.5, bins with >= 10 rows
 """
@@ -25,7 +25,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
-from matplotlib.ticker import FuncFormatter, LogLocator, MaxNLocator, NullFormatter  # noqa: E402
+from matplotlib.ticker import (FuncFormatter, LogLocator, MaxNLocator, NullFormatter,  # noqa: E402
+                               NullLocator)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
@@ -308,6 +309,12 @@ def fig_E12(res, out, partition="dir0.5"):
                         color=c, ms=3, elinewidth=0.6, capsize=0,
                         mfc=c if lr == "rf" else "white", label=LR_LABEL[lr])
         plain_log_x(ax)
+        ax.set_xticks(sorted(t[t.dataset == ds].n_cal_value.unique()))
+        ax.xaxis.set_minor_locator(NullLocator())
+        ax.tick_params(axis="x", labelrotation=45)
+        for lab in ax.get_xticklabels():
+            lab.set_ha("right")
+            lab.set_rotation_mode("anchor")
         ax.axhline(1, color="#999999", lw=0.6, ls=":")
         ax.axhline(0, color="#999999", lw=0.6)
         ax.set_xlabel("Labeled records for level 2, $n_{cal}$")
@@ -318,6 +325,7 @@ def fig_E12(res, out, partition="dir0.5"):
     h, l = axes[0, 0].get_legend_handles_labels()
     fig.legend(h, l, loc="lower center", ncol=2, frameon=False)
     fig.tight_layout(rect=(0, 0.1, 1, 1), w_pad=1.0)
+    fig.align_xlabels(axes[0])
     save(fig, out, "S_E12")
 
 
