@@ -152,6 +152,7 @@ def _share_panel(ax, t, rows, level, groups, group_style, offsets):
                         ms=3, elinewidth=0.8, capsize=0)
     ax.axvline(0, color="#999999", lw=0.6)
     ax.axvline(1, color="#999999", lw=0.6, ls=":")
+    ax.set_xticks([0, 0.5, 1])
     ax.set_yticks(range(len(rows)))
     ax.set_ylim(len(rows) - 0.5, -0.5)
 
