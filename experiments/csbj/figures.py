@@ -25,12 +25,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
-from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter  # noqa: E402
+from matplotlib.ticker import FuncFormatter, LogLocator, MaxNLocator, NullFormatter  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
 
-TWO_COL, ONE_COL = 7.2, 3.5
+TWO_COL, ONE_COL = 6.0, 2.83
 GREEN = "#009E73"
 STYLE = {  # level -> (color, linestyle, label)
     "m0": ("#999999", "-", "Level 0"),
@@ -78,15 +78,19 @@ def letter(ax, i):
 def plain_log_x(ax, decades=None):
     """Log x axis with plain numbers.
 
-    Labels sit at 1, 2 and 5 times powers of 10 when the data span at most two
-    decades, and at powers of 10 only when they span more, so labels never overlap.
+    Labels sit at 1, 2 and 5 times powers of 10 when the data span one to two
+    decades, at powers of 10 only when they span more, and at a few evenly spaced
+    values when they span less than one decade, so labels never overlap.
     """
     ax.set_xscale("log")
     if decades is None:
         lo, hi = ax.dataLim.intervalx
         decades = np.log10(hi / lo) if lo > 0 and hi > lo else 0
-    subs = (1.0, 2.0, 5.0) if decades <= 2 else (1.0,)
-    ax.xaxis.set_major_locator(LogLocator(base=10, subs=subs))
+    if decades < 1:
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10]))
+    else:
+        subs = (1.0, 2.0, 5.0) if decades <= 2 else (1.0,)
+        ax.xaxis.set_major_locator(LogLocator(base=10, subs=subs))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:,.0f}"))
     ax.xaxis.set_minor_formatter(NullFormatter())
 
