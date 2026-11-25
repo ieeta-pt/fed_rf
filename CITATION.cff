@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "fed_rf_mk: federated Random Forest and XGBoost with a disclosure ladder"
+version: 1.1.0
+license: MIT
+repository-code: "https://github.com/ieeta-pt/fed_rf"
+authors:
+  - family-names: Cotorobai
+    given-names: Alexandre
+    affiliation: "IEETA, DETI, University of Aveiro"
+  - family-names: Silva
+    given-names: Jorge Miguel
+    affiliation: "IEETA, DETI, University of Aveiro"
+  - family-names: Oliveira
+    given-names: José Luís
+    affiliation: "IEETA, DETI, University of Aveiro"
+preferred-citation:
+  type: article
+  title: "Privacy-Aware Federated Tree Models for Secure and Transparent Machine Learning"
+  journal: "Computational and Structural Biotechnology Journal"
+  authors:
+    - family-names: Silva
+      given-names: Jorge Miguel
+      affiliation: "IEETA, DETI, University of Aveiro"
+    - family-names: Cotorobai
+      given-names: Alexandre
+      affiliation: "IEETA, DETI, University of Aveiro"
+    - family-names: Oliveira
+      given-names: José Luís
+      affiliation: "IEETA, DETI, University of Aveiro"

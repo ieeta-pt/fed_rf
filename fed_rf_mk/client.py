@@ -379,4 +379,4 @@ class FLClient:
 
 
 def hello_world() -> str:
-    return "Hello! This is fed_rf_mk client module. Installed correctly.\nVersion 1.0.0.\nMade by Alexandre Cotorobai."
+    return "Hello! This is fed_rf_mk client module. Installed correctly.\nVersion 1.1.0.\nMade by Alexandre Cotorobai."
