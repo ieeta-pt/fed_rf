@@ -24,10 +24,11 @@ Python 3.12 or newer (numpy 2.5.5, scipy 1.18.1 and xgboost 3.4.1 of the lock fi
   `heart_2022_no_nans.csv` (246,022 rows, 40 columns), downloaded by hand into the data folder.
   Kaggle needs a login, so `fetch_data.py` does not download it. Open
   https://www.kaggle.com/datasets/kamilpytlak/personal-key-indicators-of-heart-disease,
-  press Download, then extract the file into the data folder (`CSBJ_DATA`,
+  press Download (Kaggle saves the zip as `archive.zip`), then extract
+  `2022/heart_2022_no_nans.csv` into the data folder (`CSBJ_DATA`,
   default `../data` next to the repository):
 
-      unzip -j "$(ls -t ~/Downloads/*.zip | head -1)" '*heart_2022_no_nans.csv' -d ../data/
+      unzip -j ~/Downloads/archive.zip 2022/heart_2022_no_nans.csv -d ../data/
       wc -l ../data/heart_2022_no_nans.csv     # 246023 (header plus 246,022 rows)
 
   `fetch_data.py` then checks the numbers of rows and columns and prints the positives.

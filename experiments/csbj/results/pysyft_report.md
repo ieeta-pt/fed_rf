@@ -1,7 +1,7 @@
 # PySyft path of fed_rf and the disclosure ladder
 
 Facts only, each with the file and function where it happens. Paths are
-relative to the repository root. The checks were run on the Mac on 2026-11-25.
+relative to the repository root. The checks were run on an arm64 Mac on 2026-11-25.
 
 ## 1. Versions
 
@@ -348,9 +348,10 @@ output is in `experiments/csbj/results/pysyft_equivalence.json`.
   per site are t = (56, 26, 18), and there was no out of bag fallback.
 * **Diabetic sites.** n_k = (226, 234, 40, 420) and
   n_k^+ = (112, 122, 12, 242).
-* **Rerun.** The test was rerun after the changes of 1b, with the same result:
+* **Rerun.** The test was rerun after the changes to approval, mock data, release
+  levels and accounts (section 10), with the same result:
   largest difference 0.0 in every arm, and in a and b.
-* **Run time.** Both configurations take about 60 s together on the Mac.
+* **Run time.** Both configurations take about 60 s together on an arm64 Mac.
 
 ## 8. Tests
 
@@ -369,14 +370,15 @@ output is in `experiments/csbj/results/pysyft_equivalence.json`.
     accounts, binding and analysis switch.
 * **Simulation unchanged.**
   * `run_task.py`, `analyze.py`, `tables.py` and `figures.py` were not changed.
-  * The functions of `ladder.py` were not changed in 1b.
+  * The functions of `ladder.py` were not changed by the changes to approval,
+    mock data, release levels and accounts (section 10).
   * `numbers.json`, the tables and the figures were not regenerated and did not
     change.
 
 ## 9. What Section 2.7 of the paper and Section S3 of the SI say and the code does not do
 
 * **Claims compared with the code.** Section 2.7 of the paper and Section S3
-  of the Supplementary Information claim two things:
+  of the Supplementary Materials claim two things:
   * the data owners approve the code, and the values of the parameters, that
     run on their data;
   * the disclosure ladder, including what each level releases, is implemented
@@ -430,7 +432,7 @@ What the code still does not do, or does only in part:
 
 ## 10. Changes to fed_rf
 
-### 9.1
+### Disclosure ladder on the PySyft path
 
 * `fed_rf_mk/remote_tasks.py`
   * `ml_experiment` returns n_k, n_k^+ and, for oob sampling, the out of bag
@@ -457,7 +459,7 @@ What the code still does not do, or does only in part:
   * The number of trees per site follows the largest remainder rule.
   * The selection is reproducible (seed 42 by default).
 
-### 1b
+### Approval, mock data, release levels and accounts
 
 * `fed_rf_mk/server.py`
   * `FLServer` has `auto_accept=False` by default.
