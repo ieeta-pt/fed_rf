@@ -1,0 +1,103 @@
+{
+  "aids_rf_dir0.5_K3_size_oob": {
+    "K": 3,
+    "compared": "p",
+    "dataset": "aids",
+    "fold": 0,
+    "learner": "rf",
+    "max_abs_diff": {
+      "fed_L0": 0.0,
+      "fed_L1": 0.0,
+      "fed_L1g": 0.0,
+      "fed_L2": 0.0,
+      "src0_L0": 0.0,
+      "src0_L1": 0.0,
+      "src0_L2": 0.0,
+      "src1_L0": 0.0,
+      "src1_L1": 0.0,
+      "src1_L2": 0.0,
+      "src2_L0": 0.0,
+      "src2_L1": 0.0,
+      "src2_L2": 0.0
+    },
+    "max_abs_diff_all": 0.0,
+    "max_abs_diff_rec_ab": 0.0,
+    "n_cal": 85,
+    "n_k": [
+      951,
+      448,
+      312
+    ],
+    "n_test": 343,
+    "oob_fallback": [
+      false,
+      false,
+      false
+    ],
+    "partition": "dir0.5",
+    "pos_k": [
+      273,
+      127,
+      17
+    ],
+    "rep": 0,
+    "simulation_vs_run_cell": 0.0,
+    "site_weights": "size",
+    "t": [
+      56,
+      26,
+      18
+    ],
+    "tolerance": 1e-12,
+    "tree_sampling": "oob"
+  },
+  "diabetic_xgb_dir0.5_K4_equal_uniform": {
+    "K": 4,
+    "compared": "z",
+    "dataset": "diabetic",
+    "fold": 0,
+    "learner": "xgb",
+    "max_abs_diff": {
+      "fed_L0": 0.0,
+      "fed_L1": 0.0,
+      "fed_L1g": 0.0,
+      "fed_L2": 0.0,
+      "src0_L0": 0.0,
+      "src0_L1": 0.0,
+      "src0_L2": 0.0,
+      "src1_L0": 0.0,
+      "src1_L1": 0.0,
+      "src1_L2": 0.0,
+      "src2_L0": 0.0,
+      "src2_L1": 0.0,
+      "src2_L2": 0.0,
+      "src3_L0": 0.0,
+      "src3_L1": 0.0,
+      "src3_L2": 0.0
+    },
+    "max_abs_diff_all": 0.0,
+    "max_abs_diff_rec_ab": 0.0,
+    "n_cal": 46,
+    "n_k": [
+      226,
+      234,
+      40,
+      420
+    ],
+    "n_test": 185,
+    "oob_fallback": null,
+    "partition": "dir0.5",
+    "pos_k": [
+      112,
+      122,
+      12,
+      242
+    ],
+    "rep": 0,
+    "simulation_vs_run_cell": 0.0,
+    "site_weights": "equal",
+    "t": null,
+    "tolerance": 1e-09,
+    "tree_sampling": "uniform"
+  }
+}

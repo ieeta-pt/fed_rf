@@ -12,6 +12,8 @@ Privacy-preserving federated learning for tree-based models (RandomForest, XGBoo
 - Repository Structure
 - Installation
 - Quickstart
+- Disclosure ladder
+- Reproducing the CSBJ paper
 - Detailed Usage
   - Parameters
   - RandomForest example
@@ -109,10 +111,16 @@ Key runtime deps:
 - xgboost>=2.0
 
 ## Quickstart
-Start two train datasites and one eval datasite (example ports/paths):
+Start two train datasites and one eval datasite (example ports/paths). Each
+data owner gives the new admin password and the password of the data
+scientist account (arguments or the environment variables
+`FEDRF_ADMIN_PASSWORD`, `FEDRF_DS_PASSWORD`; `FEDRF_DS_EMAIL` defaults to
+`fedlearning@rf.com`). Requests are approved by hand unless `auto_accept=True`,
+and the mock that the data scientist sees is synthetic unless a `mock_path` is
+given.
 
 ```python
-from package_pysyft.server import FLServer
+from fed_rf_mk.server import FLServer
 import threading
 
 servers = [
@@ -127,12 +135,14 @@ for s in servers:
 Train and evaluate with the client:
 
 ```python
-from package_pysyft.client import FLClient
+import os
+from fed_rf_mk.client import FLClient
 
+password = os.environ["FEDRF_DS_PASSWORD"]
 rf_client = FLClient()
-rf_client.add_train_client("silo1", "http://localhost:8080", "fedlearning@rf.com", "****", weight=0.6)
-rf_client.add_train_client("silo2", "http://localhost:8081", "fedlearning@rf.com", "****", weight=0.4)
-rf_client.add_eval_client("eval_silo", "http://localhost:8082", "fedlearning@rf.com", "****")
+rf_client.add_train_client("silo1", "http://localhost:8080", "fedlearning@rf.com", password)
+rf_client.add_train_client("silo2", "http://localhost:8081", "fedlearning@rf.com", password)
+rf_client.add_eval_client("eval_silo", "http://localhost:8082", "fedlearning@rf.com", password)
 
 dataParams = {
   "target": "cid",
@@ -148,15 +158,159 @@ modelParams = {
   "train_size": 0.8,
   "test_size": 0.8,
   "fl_epochs": 1,
+  "site_weights": "size",      # equal (default), size, positives, or manual (weights of add_train_client)
+  "release_level": "all",      # 0, 1, 2, 3, 3+1, 3+2 or all (see fed_rf_mk/release.py)
 }
 
 rf_client.set_data_params(dataParams)
 rf_client.set_model_params(modelParams)
 
-rf_client.run_model()
-results = rf_client.run_evaluate()
+rf_client.send_request()            # values of dataParams and modelParams are bound in each request
+rf_client.run_model()               # waits until each training request is approved
+results = rf_client.run_evaluate()  # sends the evaluation request, waits for its approval
 print(results)
 ```
+
+## Disclosure ladder
+
+The disclosure ladder (`fed_rf_mk/ladder.py`) orders what the training sites
+release, from least to most:
+
+* **Level 0.** One training site, the source, releases its fitted model, used
+  as it is at a separate deployment site.
+* **Level 1.** Every site also releases its counts n_k and n_k^+, and the source
+  model is shifted to the pooled prevalence π = Σ n_k^+ / Σ n_k
+  (`shift_prob` for Random Forest probabilities, `shift_logit` for log odds).
+* **Level 2.** Instead, the deployment site recalibrates the source model on
+  its own labeled patients (`fit_recalibration`, `apply_recalibration`). The
+  labeled records never leave it.
+* **Level 3.** Every site releases its model, and the K models are combined.
+  The federated model is used as it is (3), with the correction of level 1
+  (3+1), or with the correction of level 2 (3+2).
+  * Random Forest: `site_weights`, `allocate_trees` (largest remainder) and
+    `select_trees` with a seeded numpy generator, uniform or by out of bag
+    score.
+  * XGBoost: the weighted average of the site log odds (`xgb_federated`).
+
+`ladder.py` imports only numpy, scipy, scikit-learn and xgboost, so it can be
+used without PySyft. The simulation of the CSBJ paper calls it directly
+(`experiments/csbj/run_task.py`). The PySyft path calls the same functions at
+the sites, at the coordinator and at the deployment site.
+
+### What leaves each site: `release_level`
+
+`model_params["release_level"]` decides what leaves the training sites
+(`fed_rf_mk/release.py`). Levels 0, 1 and 2 also need
+`model_params["source_site"]`. The plan of each site is bound in its code
+request, so the data owner approves exactly what will be released. A site with
+no role at a level gets no request.
+
+| release_level | source site | every other site | the deployment site computes |
+|---|---|---|---|
+| `0` | model | nothing (no request) | source as it is |
+| `1` | model, n_k, n_k^+ | n_k, n_k^+ (`site_counts`, no model trained) | source as it is and shifted to π |
+| `2` | model | nothing (no request) | source as it is and recalibrated |
+| `3` | model | model | every source as it is, federated model |
+| `3+1` | model, n_k, n_k^+ | model, n_k, n_k^+ | as 3, plus level 1 for every source and the federated model |
+| `3+2` | model | model | as 3, plus level 2 for every source and the federated model |
+| `all` (default) | model, n_k, n_k^+ and the full result of the single round | the same | every level |
+
+* **Counts for the site weights.** At `3` and `3+2`, a site also sends n_k with
+  `size` weights and n_k^+ with `positives` weights. With `equal` or `manual`
+  weights it sends no count.
+* **Out of bag scores.** They leave a site only for Random Forest with
+  `tree_sampling="oob"`, at `3`, `3+1` and `3+2`.
+* **Analysis outputs.** SHAP and PFI outputs leave only with `all`.
+* **What the deployment site receives.** It gets only what the level released:
+  * the source model for `0`, `1` and `2`;
+  * every model with the site weights and the tree selection for `3`, `3+1` and
+    `3+2`;
+  * π and π_k for `1` and `3+1`.
+
+  It computes only the levels it is given.
+* **`all`.** It keeps the single round of earlier versions and is meant for
+  experiments.
+
+`experiments/csbj/tests/test_pysyft_release.py` checks, for every value,
+which keys leave each site and what the deployment site receives. The observed
+keys are listed in `experiments/csbj/results/pysyft_report.md`.
+
+### Options in `model_params`
+
+| option | default | meaning |
+|---|---|---|
+| `release_level` | `all` | `0`, `1`, `2`, `3`, `3+1`, `3+2` or `all` |
+| `source_site` | None | name of the source site, for `0`, `1` and `2` |
+| `site_weights` | `equal` | `equal`, `size`, `positives`, or `manual` (weights given to `add_train_client`) |
+| `tree_sampling` | `uniform` | `uniform` or `oob` (Random Forest) |
+| `seed` | 42 | int or list of ints, generator of the tree selection |
+| `site_seeds` | None | {site name: random_state of its local model}; otherwise 42 at every site |
+| `calibration` | `fraction` 0.2, `n_cal` None, `random_state` 42 | calibration part of the deployment site for level 2 |
+| `return_predictions` | False | also return the per record outputs of the test part of the deployment site |
+| `approval_timeout` | 300 | seconds that `run_model` and `run_evaluate` wait for an approval |
+
+### Approval, mock data and accounts
+
+* **Approval.** Every DataSite runs submitted code only after its data owner
+  approves it. `FLServer` approves by hand by default (`auto_accept=False`),
+  through `list_pending_requests`, `inspect_request`, `request_parameters`
+  and `approve_request`.
+* **Bound values.** The values of `dataParams` and `modelParams` are bound in
+  each request (`sy.Constant`). An approval therefore covers these values, and
+  other values need a new request.
+* **Order of the requests.**
+  * `send_request` sends the training requests.
+  * The evaluation request carries the released models, so it is sent after
+    training, by `send_evaluation_request` or by `run_evaluate`.
+* **Mock data.** The data scientist never sees the real data as the mock. Without
+  a `mock_path`, each DataSite builds a synthetic mock with 100 rows and the
+  columns and dtypes of its data. Values are drawn independently for each
+  column with a fixed seed.
+* **Accounts.**
+  * The data owner gives the new admin password and the password of the data
+    scientist account, as arguments or in `FEDRF_ADMIN_PASSWORD` and
+    `FEDRF_DS_PASSWORD`. `FEDRF_DS_EMAIL` defaults to `fedlearning@rf.com`.
+  * The PySyft default admin password is replaced at start.
+  * Guest signup is disabled unless asked for (`allow_guest_signup`, or
+    `FEDRF_ALLOW_GUEST_SIGNUP=1`).
+* **Further detail.** What each step releases, where it runs and what the code
+  does not cover is described in `experiments/csbj/results/pysyft_report.md`.
+
+## Reproducing the CSBJ paper
+
+Every table, figure and number of the CSBJ paper comes from
+`experiments/csbj`. The full instructions are in `experiments/csbj/README.md`.
+
+1. **Environment.** Python 3.12 or newer (the lock file pins numpy 2.5.5, scipy
+   1.18.1 and xgboost 3.4.1, which need 3.12), then
+   `pip install -r experiments/csbj/requirements_lock.txt`. The simulation does
+   not need PySyft.
+2. **Data.**
+   * `python experiments/csbj/fetch_data.py` fetches AIDS (UCI 890) and
+     Diabetic Retinopathy Debrecen (UCI 329).
+   * Heart (`heart_2022_no_nans.csv`, Kaggle
+     `kamilpytlak/personal-key-indicators-of-heart-disease`) is downloaded by
+     hand into the data folder.
+   * Then `python experiments/csbj/data.py` encodes Heart.
+3. **Tests.** `python -m pytest -q fed_rf_mk/tests/test_ladder.py experiments/csbj/tests`.
+4. **Runs.**
+   * `experiments/csbj/run_task.py` runs one task (dataset, repetition, fold).
+   * The paper uses 10 repetitions of 5 fold cross validation (50 draws) for
+     the main grid, and 4 repetitions for the regularized sensitivity
+     configuration.
+   * On a Slurm cluster, `experiments/csbj/slurm/submit.sh` submits them as
+     chained arrays.
+5. **Tables, numbers and figures.**
+   * `python experiments/csbj/analyze.py report --datasets aids diabetic heart --r-rep 10 --r-rep-reg 4`
+     writes the tables, `numbers.json` and `numbers.md`.
+   * `python experiments/csbj/figures.py` writes the figures.
+   * `python experiments/csbj/si_tables.py` writes the supplementary tables.
+6. **Results in this repository.** The results of the paper are committed in
+   `experiments/csbj/results`, so every number can be traced to a commit.
+7. **PySyft path.** `experiments/csbj/tests/test_pysyft_equivalence.py` checks
+   that the PySyft path gives the predictions of the simulation. It needs a
+   separate environment (`experiments/csbj/requirements_pysyft_lock.txt`,
+   because PySyft 0.9.5 needs numpy < 1.27).
 
 ## Detailed Usage
 
@@ -297,7 +451,7 @@ print(xgb_client.run_evaluate())
 
 ## Models & Experiments
 - RandomForest:
-  - Training: local RF per silo; aggregation merges estimators proportionally to normalized weights.
+  - Training: local RF per silo; aggregation takes t_k trees per site by largest remainder (`ladder.allocate_trees`), chosen with a seeded generator (`ladder.select_trees`).
   - Warm-start: `n_incremental_estimators` grows trees for subsequent rounds.
 - XGBoost:
   - Training: XGB per silo; for continuation, the booster is reused and `n_estimators` is increased.
@@ -320,13 +474,15 @@ Explainability:
 
 ## Troubleshooting / FAQ
 - Evaluate fails with “Reference don’t match: dict”
-  - Ensure evaluation function is available on datasite. The client has a fallback that creates a syft function ad-hoc if missing; confirm your server auto-accepts or approve requests manually.
+  - The evaluation request is sent after training (`send_evaluation_request` or `run_evaluate`) and must be approved by the data owner of the evaluation datasite before it runs.
 - Missing packages
   - Install with `pip install .[dev]` to get all deps (including shap/xgboost).
 - SHAP/PFI slow
   - Reduce `analysis.shap_sample_size` or `analysis.pfi_n_repeats`, or disable via `analysis.enabled=False`.
 
 ## Changelog
+See `CHANGELOG.md` for 1.1.0 and later.
+
 - 0.2.0 (2025-09-06)
   - Modular orchestrator/handlers/aggregation
   - Nested `model_params` support for RF/XGB
@@ -335,6 +491,7 @@ Explainability:
   - Tests + CI, pre-commit hooks
 
 ## Citation / License / Acknowledgements
+- Citation: see `CITATION.cff`.
 - License: MIT
 - Built with:
   - [PySyft](https://github.com/OpenMined/PySyft)

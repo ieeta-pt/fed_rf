@@ -26,14 +26,38 @@ class DataSiteThread(Thread):
 
 
 class FLServer:
-    def __init__(self, name: str, port: int, data_path: str, mock_path: str = None, auto_accept: bool = True, analysis_allowed: bool | None = None):
+    """One DataSite. Code requests are approved by hand unless ``auto_accept``
+    is True (``list_pending_requests``, ``inspect_request``,
+    ``request_parameters``, ``approve_request``).
+
+    ``mock_path`` is a mock file of the data owner. Without it a synthetic mock
+    is built (``datasets.generate_mock``); the real data is never the mock.
+    ``admin_password``, ``ds_email``, ``ds_password`` and ``allow_guest_signup``
+    go to ``datasites.spawn_server`` (or come from its environment variables).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        port: int,
+        data_path: str,
+        mock_path: str = None,
+        auto_accept: bool = False,
+        analysis_allowed: bool | None = None,
+        admin_password: str | None = None,
+        ds_email: str | None = None,
+        ds_password: str | None = None,
+        allow_guest_signup: bool | None = None,
+    ):
         self.name = name
         self.port = port
         self.data_path = data_path
-        self.mock_path = mock_path if mock_path else data_path
+        self.mock_path = mock_path
         self.auto_accept = auto_accept
         # Optional default analysis policy to set at startup. If None, leaves current policy.
         self._analysis_allowed_default = analysis_allowed
+        self._accounts = dict(admin_password=admin_password, ds_email=ds_email,
+                              ds_password=ds_password, allow_guest_signup=allow_guest_signup)
         self.thread = None
         self.data_site = None
         self.client = None
@@ -55,7 +79,8 @@ class FLServer:
             name=self.name,
             port=self.port,
             data_path=self.data_path,
-            mock_path=self.mock_path
+            mock_path=self.mock_path,
+            **self._accounts,
         )
 
         # Announce local analysis policy to make behavior explicit
@@ -77,14 +102,18 @@ class FLServer:
             self.shutdown()
 
     def list_pending_requests(self):
+        """Indices (in ``client.requests``) of the requests not yet approved
+        or rejected, with the name of the function each one would run."""
         if self.client is None:
             logger.error("Client not initialized.")
-            return
-
-        logger.info("Pending requests:")
-        for idx, code in enumerate(self.client.code):
-            if not code.status.approved:
-                logger.info("[%s] Status: %s", idx, code.status)
+            return []
+        pending = []
+        for idx, req in enumerate(self.client.requests):
+            if req.status.value == 0:  # 0 == PENDING
+                func = getattr(req.code, "service_func_name", "?")
+                logger.info("[%s] %s, status %s", idx, func, req.status)
+                pending.append((idx, func))
+        return pending
 
     def approve_request(self, request_index: int):
         """
@@ -116,7 +145,20 @@ class FLServer:
             return None
 
         return req.code
-    
+
+    def request_parameters(self, request_index: int) -> dict:
+        """Values bound in the request at ``request_index`` (``dataParams`` and
+        ``modelParams``). The approved code runs only with these values."""
+        code = self.inspect_request(request_index)
+        if code is None:
+            return {}
+        out = {}
+        for rules in (code.input_policy_init_kwargs or {}).values():
+            for kw, rule in rules.items():
+                if hasattr(rule, "val") and kw != "data":
+                    out[kw] = rule.val
+        return out
+
     def shutdown(self):
         if self.data_site:
             self.data_site.land()

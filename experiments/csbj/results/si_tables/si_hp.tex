@@ -1,0 +1,37 @@
+\begin{tabular}{lll}
+\toprule
+Parameter & Default & Regularized \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Random Forest}} \\
+\texttt{bootstrap} & True & True \\
+\texttt{ccp\_alpha} & 0.0 & 0.0 \\
+\texttt{class\_weight} & None & None \\
+\texttt{criterion} & gini & gini \\
+\texttt{max\_depth} & None & None \\
+\texttt{max\_features} & sqrt & sqrt \\
+\texttt{max\_leaf\_nodes} & None & None \\
+\texttt{max\_samples} & None & None \\
+\texttt{min\_impurity\_decrease} & 0.0 & 0.0 \\
+\texttt{min\_samples\_leaf} & 1 & 5 \\
+\texttt{min\_samples\_split} & 2 & 2 \\
+\texttt{min\_weight\_fraction\_leaf} & 0.0 & 0.0 \\
+\texttt{monotonic\_cst} & None & None \\
+\texttt{n\_estimators} & 100 & 100 \\
+\texttt{n\_jobs} & 1 & 1 \\
+\texttt{oob\_score} & False & False \\
+\texttt{random\_state} & per model & per model \\
+\texttt{verbose} & 0 & 0 \\
+\texttt{warm\_start} & False & False \\
+\addlinespace
+\multicolumn{3}{@{}l}{\textit{XGBoost}} \\
+\texttt{enable\_categorical} & True & True \\
+\texttt{learning\_rate} & 0.3 & 0.1 \\
+\texttt{max\_depth} & 6 & 6 \\
+\texttt{missing} & NaN & NaN \\
+\texttt{n\_estimators} & 100 & 100 \\
+\texttt{n\_jobs} & 1 & 1 \\
+\texttt{objective} & binary:logistic & binary:logistic \\
+\texttt{random\_state} & per model & per model \\
+\texttt{tree\_method} & hist & hist \\
+\bottomrule
+\end{tabular}

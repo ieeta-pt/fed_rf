@@ -1,0 +1,418 @@
+{
+  "0": {
+    "arms": [
+      "src1_L0"
+    ],
+    "deploy_ladder": [
+      "model_type",
+      "models",
+      "sites",
+      "sources"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 1,
+    "site_keys": {
+      "site1": [
+        "model",
+        "model_type"
+      ]
+    },
+    "site_requests": {
+      "site0": [],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": []
+    }
+  },
+  "1": {
+    "arms": [
+      "src1_L0",
+      "src1_L1"
+    ],
+    "deploy_ladder": [
+      "model_type",
+      "models",
+      "pi",
+      "pi_k",
+      "sites",
+      "sources"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 1,
+    "site_keys": {
+      "site0": [
+        "n_pos",
+        "n_train"
+      ],
+      "site1": [
+        "model",
+        "model_type",
+        "n_pos",
+        "n_train"
+      ],
+      "site2": [
+        "n_pos",
+        "n_train"
+      ]
+    },
+    "site_requests": {
+      "site0": [
+        "site_counts"
+      ],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": [
+        "site_counts"
+      ]
+    }
+  },
+  "2": {
+    "arms": [
+      "src1_L0",
+      "src1_L2"
+    ],
+    "deploy_ladder": [
+      "model_type",
+      "models",
+      "sites",
+      "sources"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 1,
+    "site_keys": {
+      "site1": [
+        "model",
+        "model_type"
+      ]
+    },
+    "site_requests": {
+      "site0": [],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": []
+    }
+  },
+  "3": {
+    "arms": [
+      "fed_L0",
+      "src0_L0",
+      "src1_L0",
+      "src2_L0"
+    ],
+    "deploy_ladder": [
+      "T_k",
+      "model_type",
+      "models",
+      "oob_fallback",
+      "sampling",
+      "seed",
+      "selections",
+      "sites",
+      "sources",
+      "t",
+      "weights",
+      "weights_kind"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 3,
+    "site_keys": {
+      "site0": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ],
+      "site1": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ],
+      "site2": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ]
+    },
+    "site_requests": {
+      "site0": [
+        "ml_experiment"
+      ],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": [
+        "ml_experiment"
+      ]
+    }
+  },
+  "3+1": {
+    "arms": [
+      "fed_L0",
+      "fed_L1",
+      "fed_L1g",
+      "src0_L0",
+      "src0_L1",
+      "src1_L0",
+      "src1_L1",
+      "src2_L0",
+      "src2_L1"
+    ],
+    "deploy_ladder": [
+      "T_k",
+      "model_type",
+      "models",
+      "oob_fallback",
+      "pi",
+      "pi_k",
+      "sampling",
+      "seed",
+      "selections",
+      "sites",
+      "sources",
+      "t",
+      "weights",
+      "weights_kind"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 3,
+    "site_keys": {
+      "site0": [
+        "model",
+        "model_type",
+        "n_pos",
+        "n_train",
+        "oob_scores"
+      ],
+      "site1": [
+        "model",
+        "model_type",
+        "n_pos",
+        "n_train",
+        "oob_scores"
+      ],
+      "site2": [
+        "model",
+        "model_type",
+        "n_pos",
+        "n_train",
+        "oob_scores"
+      ]
+    },
+    "site_requests": {
+      "site0": [
+        "ml_experiment"
+      ],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": [
+        "ml_experiment"
+      ]
+    }
+  },
+  "3+2": {
+    "arms": [
+      "fed_L0",
+      "fed_L2",
+      "src0_L0",
+      "src0_L2",
+      "src1_L0",
+      "src1_L2",
+      "src2_L0",
+      "src2_L2"
+    ],
+    "deploy_ladder": [
+      "T_k",
+      "model_type",
+      "models",
+      "oob_fallback",
+      "sampling",
+      "seed",
+      "selections",
+      "sites",
+      "sources",
+      "t",
+      "weights",
+      "weights_kind"
+    ],
+    "deploy_model_params": [
+      "calibration",
+      "ladder",
+      "model_type",
+      "release_level",
+      "return_predictions"
+    ],
+    "deploy_n_models": 3,
+    "site_keys": {
+      "site0": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ],
+      "site1": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ],
+      "site2": [
+        "model",
+        "model_type",
+        "n_train",
+        "oob_scores"
+      ]
+    },
+    "site_requests": {
+      "site0": [
+        "ml_experiment"
+      ],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": [
+        "ml_experiment"
+      ]
+    }
+  },
+  "all": {
+    "arms": [
+      "fed_L0",
+      "fed_L1",
+      "fed_L1g",
+      "fed_L2",
+      "src0_L0",
+      "src0_L1",
+      "src0_L2",
+      "src1_L0",
+      "src1_L1",
+      "src1_L2",
+      "src2_L0",
+      "src2_L1",
+      "src2_L2"
+    ],
+    "deploy_ladder": [
+      "T_k",
+      "model_type",
+      "models",
+      "n",
+      "n_pos",
+      "oob_fallback",
+      "pi",
+      "pi_k",
+      "sampling",
+      "seed",
+      "selections",
+      "sites",
+      "sources",
+      "t",
+      "weights",
+      "weights_kind"
+    ],
+    "deploy_model_params": [
+      "allow_analysis",
+      "calibration",
+      "ensemble_members",
+      "ladder",
+      "model",
+      "model_type",
+      "n_base_estimators",
+      "n_incremental_estimators",
+      "release_level",
+      "return_predictions",
+      "seed",
+      "site_weights",
+      "source_site",
+      "train_size",
+      "tree_sampling"
+    ],
+    "deploy_n_models": 3,
+    "site_keys": {
+      "site0": [
+        "analysis_status",
+        "model",
+        "model_type",
+        "n_base_estimators",
+        "n_incremental_estimators",
+        "n_pos",
+        "n_train",
+        "oob_scores",
+        "sample_size",
+        "test_size",
+        "train_size"
+      ],
+      "site1": [
+        "analysis_status",
+        "model",
+        "model_type",
+        "n_base_estimators",
+        "n_incremental_estimators",
+        "n_pos",
+        "n_train",
+        "oob_scores",
+        "sample_size",
+        "test_size",
+        "train_size"
+      ],
+      "site2": [
+        "analysis_status",
+        "model",
+        "model_type",
+        "n_base_estimators",
+        "n_incremental_estimators",
+        "n_pos",
+        "n_train",
+        "oob_scores",
+        "sample_size",
+        "test_size",
+        "train_size"
+      ]
+    },
+    "site_requests": {
+      "site0": [
+        "ml_experiment"
+      ],
+      "site1": [
+        "ml_experiment"
+      ],
+      "site2": [
+        "ml_experiment"
+      ]
+    }
+  }
+}
