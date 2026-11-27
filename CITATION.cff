@@ -17,7 +17,7 @@ authors:
 preferred-citation:
   type: article
   status: in-preparation
-  title: "What Should Hospitals with Different Outcome Prevalence Share to Train Federated Tree Ensembles?"
+  title: "How Much to Share in Federated Tree Ensembles for Clinical Prediction"
   journal: "Computational and Structural Biotechnology Journal"
   authors:
     - family-names: Silva
